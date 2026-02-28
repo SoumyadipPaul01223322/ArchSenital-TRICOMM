@@ -9,11 +9,14 @@
  */
 
 import type * as aiExplanation from "../aiExplanation.js";
+import type * as apiKeys from "../apiKeys.js";
 import type * as architecture from "../architecture.js";
 import type * as architectures from "../architectures.js";
 import type * as awsDeployment from "../awsDeployment.js";
 import type * as riskEngine from "../riskEngine.js";
+import type * as settings from "../settings.js";
 import type * as setup from "../setup.js";
+import type * as simulations from "../simulations.js";
 
 import type {
   ApiFromModules,
@@ -23,11 +26,14 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   aiExplanation: typeof aiExplanation;
+  apiKeys: typeof apiKeys;
   architecture: typeof architecture;
   architectures: typeof architectures;
   awsDeployment: typeof awsDeployment;
   riskEngine: typeof riskEngine;
+  settings: typeof settings;
   setup: typeof setup;
+  simulations: typeof simulations;
 }>;
 
 /**

@@ -46,3 +46,10 @@ export const getArchitecture = query({
         return await ctx.db.get(args.id);
     },
 });
+
+export const deleteArchitecture = mutation({
+    args: { id: v.id("architectures") },
+    handler: async (ctx, args) => {
+        await ctx.db.delete(args.id);
+    },
+});

@@ -392,18 +392,26 @@ function ComponentCategory({ label, items, onDragStart }: { label: string; items
 function ArchitectContent() {
     const searchParams = useSearchParams();
     const projectId = searchParams.get("id");
+    const archId = searchParams.get("archId");
     const { orgId } = useAuth();
 
-    // Fetch diagram from Convex
+    // Fetch primary operational diagram from Convex
     const diagram = useQuery(api.architecture.getDiagram,
         projectId ? { projectId: projectId as any } : "skip"
     );
+
+    // Or fetch a saved vault blueprint if archId is provided
+    const blueprint = useQuery(api.architectures.getArchitecture,
+        archId ? { id: archId as any } : "skip"
+    );
+
     const saveArch = useMutation(api.architecture.saveDiagram);
     const simulateAttack = useMutation(api.riskEngine.simulateAttack);
     const generateAiSummary = useAction(api.aiExplanation.generateExecutiveSummary);
     const provisionInfra = useAction(api.awsDeployment.provisionInfrastructure);
     const saveArchBlueprint = useMutation(api.architectures.saveArchitecture);
     const savedArchitectures = useQuery(api.architectures.listArchitectures, { ownerId: orgId || "local" });
+    const logSimulationRun = useMutation(api.simulations.saveSimulationRun);
 
     const [nodes, setNodes] = useNodesState<Node>([]);
     const [edges, setEdges] = useEdgesState<Edge>(initialEdges);
@@ -443,6 +451,10 @@ function ArchitectContent() {
     const [replayingNodes, setReplayingNodes] = useState<string[]>([]);
     const [componentSearch, setComponentSearch] = useState('');
 
+    const [isSavingVault, setIsSavingVault] = useState(false);
+    const [showVaultDialog, setShowVaultDialog] = useState(false);
+    const [vaultName, setVaultName] = useState('');
+
     const [isSyncingAws, setIsSyncingAws] = useState(false);
     const [isSyncingDns, setIsSyncingDns] = useState(false);
     const [deploymentResults, setDeploymentResults] = useState<{
@@ -471,20 +483,69 @@ function ArchitectContent() {
 
     // Construct local graph context
     useEffect(() => {
-        if (diagram) {
-            setNodes(diagram.nodes || []);
-            setEdges(diagram.edges || []);
-        } else if (diagram === null) {
+        const sourceData = diagram || blueprint;
+
+        if (sourceData) {
+            const rawNodes = sourceData.nodes || [];
+            const styledNodes = rawNodes.map((n: any) => {
+                const nodeColorMap: Record<string, { bg: string, border: string, glow: string }> = {
+                    server: { bg: '#05101a', border: '#0ea5e9', glow: 'rgba(14,165,233,0.3)' },
+                    vps: { bg: '#0a0d1a', border: '#6366f1', glow: 'rgba(99,102,241,0.4)' },
+                    node: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                    router: { bg: '#1a0d05', border: '#f97316', glow: 'rgba(249,115,22,0.3)' },
+                    switch: { bg: '#051a0d', border: '#10b981', glow: 'rgba(16,185,129,0.3)' },
+                    firewall: { bg: '#1a0505', border: '#ef4444', glow: 'rgba(239,68,68,0.4)' },
+                    cdn: { bg: '#05161a', border: '#22d3ee', glow: 'rgba(34,211,238,0.3)' },
+                    siem: { bg: '#100a1a', border: '#a855f7', glow: 'rgba(168,85,247,0.3)' },
+                    attacker: { bg: '#1a0a0a', border: '#f43f5e', glow: 'rgba(244,63,94,0.4)' },
+                    internet: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                    database: { bg: '#0a0a1a', border: '#818cf8', glow: 'rgba(129,140,248,0.4)' },
+                    api: { bg: '#05121a', border: '#38bdf8', glow: 'rgba(56,189,248,0.4)' },
+                    iam: { bg: '#0f051a', border: '#c084fc', glow: 'rgba(192,132,252,0.4)' },
+                    k8s: { bg: '#100d1a', border: '#6366f1', glow: 'rgba(99,102,241,0.3)' },
+                    storage: { bg: '#051a14', border: '#10b981', glow: 'rgba(16,185,129,0.3)' },
+                    serverless: { bg: '#1a0d05', border: '#f97316', glow: 'rgba(249,115,22,0.3)' },
+                    cicd: { bg: '#1a0510', border: '#ec4899', glow: 'rgba(236,72,153,0.3)' }
+                };
+
+                const type = n.data?.componentType || n.type || 'node';
+                const colors = nodeColorMap[type] || { bg: '#111', border: '#444', glow: 'rgba(255,255,255,0.1)' };
+
+                return {
+                    ...n,
+                    type: 'default', // Force default type so rendering works natively
+                    data: {
+                        ...n.data,
+                        componentType: type
+                    },
+                    style: {
+                        background: colors.bg,
+                        color: "#fff",
+                        border: `1.5px solid ${colors.border}`,
+                        borderRadius: "10px",
+                        width: 160,
+                        padding: 10,
+                        boxShadow: `0 0 20px ${colors.glow}, 0 4px 16px rgba(0,0,0,0.5)`,
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
+                        ...n.style // Allow overrides
+                    }
+                };
+            });
+            setNodes(styledNodes);
+            setEdges(sourceData.edges || []);
+        } else if (sourceData === null && !archId && !projectId) {
             // New undefined project, use a blank slate!
             setNodes([]);
             setEdges([]);
         }
-    }, [diagram, setNodes, setEdges]);
+    }, [diagram, blueprint, archId, projectId, setNodes, setEdges]);
 
     const handleSaveAndSimulate = async () => {
         setSimulationError(null);
-        if (!projectId) {
-            setSimulationError("No project selected. Please open this page from the Projects list (e.g. /dashboard → Open Project).");
+        if (!projectId && !archId) {
+            setSimulationError("No model selected. Load a Project or Blueprint first.");
             return;
         }
         if (!orgId) {
@@ -508,12 +569,15 @@ function ArchitectContent() {
         setShowAttackPanel(true);
 
         try {
-            await saveArch({
-                projectId: projectId as any,
-                orgId,
-                nodes,
-                edges
-            });
+            // Only try to save state if we are working on a Project (not a Vault blueprint)
+            if (projectId) {
+                await saveArch({
+                    projectId: projectId as any,
+                    orgId,
+                    nodes,
+                    edges
+                });
+            }
 
             // Call the intelligent AI Threat Modeler (Gemini -> Perplexity fallback)
             const res = await fetch('/api/ai/simulate', {
@@ -551,6 +615,25 @@ function ArchitectContent() {
                 `Estimated Financial Impact: ${report.financialCost || 'Unknown'}\n` +
                 `Estimated Service Downtime: ${report.estimatedDowntime || 'Unknown'}\n`
             );
+
+            // Log the run to the new History database table
+            try {
+                // Find architecture name from active vault blueprint or fallback
+                const currentName = blueprint ? blueprint.name : "Unsaved Model";
+
+                await logSimulationRun({
+                    orgId: orgId,
+                    architectureName: currentName,
+                    initialRiskScore: diagram?.riskScore || 50,
+                    finalRiskScore: report.totalRiskScore || 0,
+                    findingCount: (report.remediationGaps || []).length,
+                    remediationsApplied: 0,
+                    status: "Completed",
+                    runDurationMs: killChain.length * 2500, // Based on fake streaming timer
+                });
+            } catch (logErr) {
+                console.error("Failed to log simulation to history:", logErr);
+            }
 
             // Stream the dynamic AI Kill Chain phases
             killChain.forEach((phase: any, phaseIdx: number) => {
@@ -594,6 +677,28 @@ function ArchitectContent() {
         }
     };
 
+    const handleSaveToVault = async () => {
+        if (!orgId || !vaultName.trim() || nodes.length === 0) return;
+        setIsSavingVault(true);
+        try {
+            await saveArchBlueprint({
+                name: vaultName.trim(),
+                ownerId: orgId, // Vault saves are Org-wide
+                nodes,
+                edges,
+                viewport: { x: 0, y: 0, zoom: 1 } // Default viewport for now
+            });
+            setShowVaultDialog(false);
+            setVaultName('');
+            setSimulationError(null); // Clear errors on success
+        } catch (err: any) {
+            console.error(err);
+            setSimulationError(err.message || "Failed to save to Vault.");
+        } finally {
+            setIsSavingVault(false);
+        }
+    };
+
     const handleDeployToAWS = async () => {
         setSimulationError(null);
         if (!projectId || !orgId) {
@@ -634,6 +739,17 @@ function ArchitectContent() {
                 edges,
                 viewport: { x: 0, y: 0, zoom: 1 }
             });
+
+            // Sync with dashboard projects table if this architecture is attached to a project
+            if (projectId) {
+                await saveArch({
+                    projectId: projectId as any,
+                    orgId: orgId || "local",
+                    nodes,
+                    edges
+                });
+            }
+
             setShowLoadMenu(false);
         } catch (err) {
             console.error(err);
@@ -714,12 +830,12 @@ function ArchitectContent() {
     };
 
     const handleAutoFix = useCallback(async () => {
-        if (!simulationResults || !simulationResults.findings) return;
+        if (!simulationResults || !simulationResults?.findings) return;
 
         // Build a precise patch map per node based on the AI's dynamic recommendations
         const nodePatchesTargeted: Record<string, Record<string, boolean>> = {};
 
-        simulationResults.findings.forEach((finding: any) => {
+        simulationResults?.findings.forEach((finding: any) => {
             if (finding.recommendedPatches && Array.isArray(finding.recommendedPatches)) {
                 finding.recommendedPatches.forEach((rp: any) => {
                     if (rp.nodeId && rp.patch) {
@@ -824,7 +940,7 @@ function ArchitectContent() {
                 doc.text("3. Detailed Vulnerability Findings", 15, currentY);
                 currentY += 8;
 
-                const tableBody = simulationResults.findings.map((f: any) => [
+                const tableBody = simulationResults?.findings.map((f: any) => [
                     f.severity,
                     f.description,
                     f.complianceMappings?.length ? f.complianceMappings.join(', ') : 'None'
@@ -1065,7 +1181,7 @@ function ArchitectContent() {
 
     const handleReplayBreach = useCallback(() => {
         if (!simulationResults) return;
-        const validComps = simulationResults.compromisedNodes.filter((id: string) =>
+        const validComps = simulationResults?.compromisedNodes.filter((id: string) =>
             nodes.find(n => n.id === id)?.data?.componentType !== 'attacker'
         );
         if (validComps.length === 0) return;
@@ -1073,7 +1189,7 @@ function ArchitectContent() {
         setIsReplaying(true);
         setReplayingNodes([]);
 
-        const sequence = simulationResults.compromisedNodes;
+        const sequence = simulationResults?.compromisedNodes;
         const DELAY_MS = 600;
 
         sequence.forEach((nodeId, index) => {
@@ -1225,7 +1341,7 @@ function ArchitectContent() {
     const complianceData = complianceTableData.map(d => ({ subject: d.framework, A: d.baseScore, fullMark: 100 }));
 
     if (simulationResults) {
-        simulationResults.findings.forEach((f: any) => {
+        simulationResults?.findings.forEach((f: any) => {
             (f.complianceMappings || []).forEach((mapping: string) => {
                 if (mapping.includes('SOC2')) { complianceTableData[0].baseScore -= 8; complianceTableData[0].gaps.push(f.mitreTechnique ?? 'Policy Gap'); }
                 if (mapping.includes('ISO')) { complianceTableData[1].baseScore -= 10; complianceTableData[1].gaps.push(f.mitreTechnique ?? 'Policy Gap'); }
@@ -1242,7 +1358,7 @@ function ArchitectContent() {
     // Exclude 'attacker' nodes from the visual compromised count
     const compromisedInfrastructureCount = (() => {
         if (!simulationResults) return 0;
-        return simulationResults.compromisedNodes.filter((id: string) => {
+        return simulationResults?.compromisedNodes.filter((id: string) => {
             const node = nodes.find(n => n.id === id);
             return node && (node.data as any).componentType !== 'attacker';
         }).length;
@@ -1252,11 +1368,11 @@ function ArchitectContent() {
     const financialImpact = (() => {
         if (!simulationResults) return null;
 
-        const criticalCount = simulationResults.findings.filter((f: any) => f.severity === 'Critical').length;
-        const highCount = simulationResults.findings.filter((f: any) => f.severity === 'High').length;
+        const criticalCount = simulationResults?.findings.filter((f: any) => f.severity === 'Critical').length;
+        const highCount = simulationResults?.findings.filter((f: any) => f.severity === 'High').length;
 
         // Also factor in raw compromised nodes in case findings severity parsing misses items
-        const rawCompromisedCount = simulationResults.compromisedNodes.filter((id: string) => nodes.find(n => n.id === id)?.data?.componentType !== 'attacker').length;
+        const rawCompromisedCount = simulationResults?.compromisedNodes.filter((id: string) => nodes.find(n => n.id === id)?.data?.componentType !== 'attacker').length;
 
         const effectiveCriticals = Math.max(criticalCount, Math.floor(rawCompromisedCount * 0.4));
         const effectiveHighs = Math.max(highCount, Math.ceil(rawCompromisedCount * 0.6));
@@ -1292,13 +1408,13 @@ function ArchitectContent() {
 
     // Attack Timeline Generator
     const attackTimeline = (() => {
-        if (!simulationResults || simulationResults.findings.length === 0) return [];
+        if (!simulationResults || simulationResults?.findings.length === 0) return [];
         const phases = [
             { time: '00:00', label: 'Reconnaissance', desc: 'Attacker scans public endpoints and service fingerprints.', color: 'text-yellow-400' },
-            { time: '00:08', label: 'Initial Access', desc: simulationResults.findings.find((f: any) => f.mitreId?.startsWith('T1190') || f.severity === 'Critical')?.description?.split(']')[1]?.trim() ?? 'Exploit identified on public-facing component.', color: 'text-orange-400' },
+            { time: '00:08', label: 'Initial Access', desc: simulationResults?.findings.find((f: any) => f.mitreId?.startsWith('T1190') || f.severity === 'Critical')?.description?.split(']')[1]?.trim() ?? 'Exploit identified on public-facing component.', color: 'text-orange-400' },
             { time: '00:23', label: 'Privilege Escalation', desc: 'Attacker leverages missing authentication to elevate permissions.', color: 'text-orange-500' },
             { time: '00:41', label: 'Lateral Movement', desc: `Breach propagates across ${compromisedInfrastructureCount} internal components via unencrypted links.`, color: 'text-red-400' },
-            { time: '01:02', label: 'Data Exfiltration', desc: `Attacker extracts sensitive records. Est. ${((simulationResults.findings.filter((f: any) => f.severity === 'Critical').length) * 50000).toLocaleString()} records compromised.`, color: 'text-red-600' },
+            { time: '01:02', label: 'Data Exfiltration', desc: `Attacker extracts sensitive records. Est. ${((simulationResults?.findings.filter((f: any) => f.severity === 'Critical').length) * 50000).toLocaleString()} records compromised.`, color: 'text-red-600' },
         ];
         // Only show up to what's actually applicable
         return phases.slice(0, Math.min(phases.length, 2 + compromisedInfrastructureCount));
@@ -1541,93 +1657,108 @@ function ArchitectContent() {
         <div className="flex h-[calc(100vh-8rem)] w-full border border-white/10 rounded-xl overflow-hidden shadow-2xl">
 
             {/* Premium Component Palette (Left Sidebar) */}
-            <div className="w-80 bg-[#080808] border-r border-white/8 flex flex-col h-full overflow-hidden">
+            <div className="w-80 bg-[#0b0b12] border-r border-white/[0.07] flex flex-col h-full overflow-hidden">
 
                 {/* Sidebar Header */}
-                <div className="p-4 border-b border-white/8 bg-gradient-to-b from-white/3 to-transparent">
-                    <div className="flex items-center justify-between mb-3">
-                        <div>
-                            <h3 className="text-xs font-bold text-white uppercase tracking-[0.15em]">Architecture Builder</h3>
-                            <p className="text-[10px] text-white/30 mt-0.5">Drag components onto the canvas</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            {/* AWS Connect */}
-                            <button
-                                onClick={handleAwsDiscovery}
-                                disabled={isSyncingAws}
-                                title="Discover live infrastructure from AWS via SDK"
-                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 hover:border-orange-500/50 text-orange-400 disabled:opacity-30 text-[9px] font-bold uppercase tracking-wider transition-all duration-200"
-                            >
-                                <Cloud className={`h-3 w-3 ${isSyncingAws ? 'animate-pulse' : ''}`} /> {isSyncingAws ? 'Mapping...' : 'Map AWS'}
-                            </button>
-                            <div className="relative">
-                                <button
-                                    onClick={handleSaveBlueprint}
-                                    disabled={isSaving || nodes.length === 0}
-                                    title="Save Architecture to Convex Cloud"
-                                    className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[9px] font-bold uppercase transition-all"
-                                >
-                                    {isSaving ? 'SAVING...' : 'SAVE'}
-                                </button>
+                <div className="px-4 pt-4 pb-3 border-b border-white/[0.07] bg-[#0b0b12] space-y-3">
+
+                    {/* Row 1: Title */}
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                            <div className="h-6 w-6 rounded-md bg-[#00e5a0]/10 border border-[#00e5a0]/20 flex items-center justify-center flex-shrink-0">
+                                <ShieldAlert className="h-3 w-3 text-[#00e5a0]" />
                             </div>
-                            <div className="relative">
-                                <button
-                                    onClick={() => setShowLoadMenu(!showLoadMenu)}
-                                    className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 text-[9px] font-bold uppercase transition-all"
-                                >
-                                    LOAD
-                                </button>
-                                {showLoadMenu && (
-                                    <div className="absolute top-full mt-2 left-0 w-64 bg-gray-900 border border-white/10 rounded-lg shadow-xl z-50 p-2 text-white text-xs">
-                                        <div className="font-bold text-white/50 mb-2 uppercase text-[10px]">Saved Blueprints</div>
-                                        {savedArchitectures?.length === 0 && <div className="text-white/30 italic">No saves found.</div>}
-                                        {savedArchitectures?.map(arch => (
-                                            <div
-                                                key={arch._id}
-                                                onClick={() => {
-                                                    setNodes(arch.nodes);
-                                                    setEdges(arch.edges);
-                                                    setShowLoadMenu(false);
-                                                }}
-                                                className="p-2 hover:bg-white/10 rounded cursor-pointer truncate flex justify-between"
-                                            >
-                                                <span className="truncate mr-2 font-medium">{arch.name}</span>
-                                                <span className="text-white/30 flex-shrink-0 text-[10px]">{new Date(arch.updatedAt).toLocaleDateString()}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
+                            <div>
+                                <h3 className="text-[11px] font-bold text-white uppercase tracking-[0.12em] leading-none">Architecture Builder</h3>
+                                <p className="text-[9px] text-white/25 mt-0.5 font-mono">Drag components onto the canvas</p>
                             </div>
-                            {/* Import */}
-                            <button
-                                onClick={() => importInputRef.current?.click()}
-                                title="Import architecture from JSON"
-                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-cyan-500/10 border border-white/8 hover:border-cyan-500/30 text-white/40 hover:text-cyan-400 text-[9px] font-bold uppercase tracking-wider transition-all duration-200"
-                            >
-                                <span className="text-sm leading-none">↑</span> Import
-                            </button>
-                            {/* Export */}
-                            <button
-                                onClick={exportArchitecture}
-                                disabled={nodes.length === 0}
-                                title="Export architecture as JSON"
-                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-emerald-500/10 border border-white/8 hover:border-emerald-500/30 text-white/40 hover:text-emerald-400 disabled:opacity-30 text-[9px] font-bold uppercase tracking-wider transition-all duration-200"
-                            >
-                                <span className="text-sm leading-none">↓</span> Export
-                            </button>
-                            {/* Hidden file input */}
-                            <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={importArchitecture} />
                         </div>
                     </div>
 
+                    {/* Row 2: Action buttons */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* MAP AWS */}
+                        <button
+                            onClick={handleAwsDiscovery}
+                            disabled={isSyncingAws}
+                            title="Discover live infrastructure from AWS via SDK"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/25 hover:border-orange-500/50 text-orange-400 disabled:opacity-30 text-[9px] font-mono font-bold uppercase tracking-wider transition-all duration-200"
+                        >
+                            <Cloud className={`h-3 w-3 ${isSyncingAws ? 'animate-pulse' : ''}`} />
+                            {isSyncingAws ? 'Mapping…' : 'Map AWS'}
+                        </button>
+
+                        {/* SAVE */}
+                        <button
+                            onClick={handleSaveBlueprint}
+                            disabled={isSaving || nodes.length === 0}
+                            title="Save Architecture to Convex Cloud"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#00e5a0]/10 hover:bg-[#00e5a0]/20 border border-[#00e5a0]/25 hover:border-[#00e5a0]/50 text-[#00e5a0] disabled:opacity-30 text-[9px] font-mono font-bold uppercase tracking-wider transition-all duration-200"
+                        >
+                            {isSaving ? 'Saving…' : 'Save'}
+                        </button>
+
+                        {/* LOAD */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowLoadMenu(!showLoadMenu)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/10 border border-white/[0.10] hover:border-white/20 text-white/50 hover:text-white text-[9px] font-mono font-bold uppercase tracking-wider transition-all"
+                            >
+                                Load
+                            </button>
+                            {showLoadMenu && (
+                                <div className="absolute top-full mt-2 left-0 w-64 bg-[#0d0d14] border border-white/[0.10] rounded-lg shadow-xl z-50 p-2 text-white text-xs">
+                                    <div className="font-mono font-bold text-white/30 mb-2 uppercase text-[9px] tracking-widest px-2">Saved Blueprints</div>
+                                    {savedArchitectures?.length === 0 && <div className="text-white/30 italic px-2">No saves found.</div>}
+                                    {savedArchitectures?.map(arch => (
+                                        <div
+                                            key={arch._id}
+                                            onClick={() => {
+                                                setNodes(arch.nodes);
+                                                setEdges(arch.edges);
+                                                setShowLoadMenu(false);
+                                            }}
+                                            className="px-2 py-2 hover:bg-white/[0.08] rounded-lg cursor-pointer flex justify-between items-center gap-2 transition-colors"
+                                        >
+                                            <span className="truncate font-medium text-white/80">{arch.name}</span>
+                                            <span className="text-white/25 flex-shrink-0 font-mono text-[9px]">{new Date(arch.updatedAt).toLocaleDateString()}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Import icon-only */}
+                        <button
+                            onClick={() => importInputRef.current?.click()}
+                            title="Import architecture from JSON"
+                            className="h-7 w-7 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/[0.08] hover:border-white/20 text-white/35 hover:text-white flex items-center justify-center transition-all duration-200"
+                        >
+                            <span className="text-xs leading-none font-bold">↑</span>
+                        </button>
+                        {/* Export icon-only */}
+                        <button
+                            onClick={exportArchitecture}
+                            disabled={nodes.length === 0}
+                            title="Export architecture as JSON"
+                            className="h-7 w-7 rounded-lg bg-white/[0.04] hover:bg-[#00e5a0]/10 border border-white/[0.08] hover:border-[#00e5a0]/30 text-white/35 hover:text-[#00e5a0] disabled:opacity-30 flex items-center justify-center transition-all duration-200"
+                        >
+                            <span className="text-xs leading-none font-bold">↓</span>
+                        </button>
+                        {/* Hidden file input */}
+                        <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={importArchitecture} />
+                    </div>
+                </div>
+                {/* Canvas Stats & AI */}
+                <div className="px-4 pb-4 border-b border-white/[0.07]">
                     {/* Canvas Stats */}
                     <div className="grid grid-cols-3 gap-2 mt-3">
                         {[
-                            { label: 'Nodes', value: nodes.length, color: 'text-cyan-400' },
-                            { label: 'Edges', value: edges.length, color: 'text-blue-400' },
-                            { label: 'Risk', value: nodes.length > 0 ? 'Active' : 'None', color: 'text-orange-400' },
+                            { label: 'Nodes', value: nodes.length, color: 'text-[#00e5a0]' },
+                            { label: 'Edges', value: edges.length, color: 'text-white/70' },
+                            { label: 'Risk', value: nodes.length > 0 ? 'Active' : 'None', color: nodes.length > 0 ? 'text-red-400' : 'text-white/30' },
                         ].map(stat => (
-                            <div key={stat.label} className="bg-white/4 border border-white/6 rounded-lg p-2 text-center">
+                            <div key={stat.label} className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-2 text-center">
                                 <div className={`text-sm font-bold ${stat.color}`}>{stat.value}</div>
                                 <div className="text-[9px] text-white/30 uppercase tracking-wider mt-0.5">{stat.label}</div>
                             </div>
@@ -1642,12 +1773,12 @@ function ArchitectContent() {
                             onChange={e => setAiPrompt(e.target.value)}
                             disabled={isGeneratingArch}
                             placeholder="Generate with AI..."
-                            className="w-full bg-indigo-900/10 border border-indigo-500/30 focus:border-indigo-400/60 rounded-xl pl-3 pr-8 py-2 text-xs text-indigo-100 placeholder-indigo-300/40 outline-none transition-colors"
+                            className="w-full bg-[#00e5a0]/[0.04] border border-[#00e5a0]/20 focus:border-[#00e5a0]/50 rounded-xl pl-3 pr-8 py-2 text-xs text-white/80 placeholder:text-white/25 outline-none transition-colors font-mono"
                         />
                         <button
                             type="submit"
                             disabled={isGeneratingArch || !aiPrompt.trim()}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#00e5a0]/60 hover:text-[#00e5a0] disabled:opacity-40 transition-colors"
                         >
                             {isGeneratingArch ? <Cloud className="h-3.5 w-3.5 animate-bounce" /> : <Zap className="h-3.5 w-3.5" />}
                         </button>
@@ -1660,7 +1791,7 @@ function ArchitectContent() {
                             value={componentSearch}
                             onChange={e => setComponentSearch(e.target.value)}
                             placeholder="Search components..."
-                            className="w-full bg-white/5 border border-white/10 focus:border-cyan-500/50 rounded-xl px-3 py-2 text-xs text-white/80 placeholder-white/20 outline-none transition-colors font-mono"
+                            className="w-full bg-white/[0.04] border border-white/[0.08] focus:border-[#00e5a0]/40 rounded-xl px-3 py-2 text-xs text-white/70 placeholder:text-white/20 outline-none transition-colors font-mono"
                         />
                         {componentSearch && (
                             <button
@@ -1675,7 +1806,7 @@ function ArchitectContent() {
                 </div>
 
                 {/* Component List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-3 space-y-1">
+                <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.06) transparent' }}>
 
                     {/* Render each category with child components */}
                     {COMPONENT_TREE.map(({ label, children }) => {
@@ -1695,7 +1826,7 @@ function ArchitectContent() {
                 </div>
 
                 {/* Bottom CTA Area */}
-                <div className="border-t border-white/8 bg-gradient-to-t from-black/60 via-black/30 to-transparent">
+                <div className="border-t border-white/[0.07] bg-[#0b0b12]">
 
                     {/* Action buttons */}
                     <div className="p-3 space-y-1.5">
@@ -1719,19 +1850,18 @@ function ArchitectContent() {
                             <button
                                 onClick={handleDeployToAWS}
                                 disabled={isDeploying}
-                                className="bg-white/5 hover:bg-orange-950/30 border border-white/8 hover:border-orange-500/30 disabled:opacity-40 text-white/60 hover:text-orange-300 py-2 rounded-xl font-medium text-[10px] flex items-center justify-center transition-all duration-200"
+                                className="bg-white/[0.04] hover:bg-orange-500/10 border border-white/[0.08] hover:border-orange-500/25 disabled:opacity-40 text-white/40 hover:text-orange-300 py-2 rounded-lg font-mono font-bold text-[9px] uppercase tracking-wider flex items-center justify-center transition-all duration-200"
                             >
                                 <Cloud className={`h-3 w-3 mr-1.5 text-orange-400 ${isDeploying ? 'animate-spin' : ''}`} />
                                 {isDeploying ? 'Deploying...' : 'Deploy AWS'}
                             </button>
 
                             <button
-                                onClick={handleSyncDns}
-                                disabled={isSyncingDns}
-                                className="bg-white/5 hover:bg-cyan-950/30 border border-white/8 hover:border-cyan-500/30 disabled:opacity-40 text-white/60 hover:text-cyan-300 py-2 rounded-xl font-medium text-[10px] flex items-center justify-center transition-all duration-200"
+                                onClick={() => setShowVaultDialog(true)}
+                                className="bg-white/[0.04] hover:bg-purple-500/10 border border-white/[0.08] hover:border-purple-500/25 text-white/40 hover:text-purple-300 py-2 rounded-lg font-mono font-bold text-[9px] uppercase tracking-wider flex items-center justify-center transition-all duration-200"
                             >
-                                <Globe className={`h-3 w-3 mr-1.5 text-cyan-400 ${isSyncingDns ? 'animate-spin' : ''}`} />
-                                {isSyncingDns ? 'Syncing...' : 'Sync Route 53'}
+                                <Database className="h-3 w-3 mr-1.5 text-purple-400" />
+                                Save to Vault
                             </button>
                         </div>
 
@@ -1752,7 +1882,7 @@ function ArchitectContent() {
                     {/* Status footer */}
                     <div className="px-3 py-2 border-t border-white/5 flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
-                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <div className="h-1.5 w-1.5 rounded-full bg-[#00e5a0] animate-pulse" />
                             <span className="text-[8px] text-white/20 font-mono uppercase tracking-widest">ArchSentinel v1.0</span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1763,6 +1893,43 @@ function ArchitectContent() {
                     </div>
                 </div>
             </div>
+
+            {/* Vault Save Dialog */}
+            {showVaultDialog && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowVaultDialog(false)}>
+                    <div className="bg-[#0b0b12] border border-white/10 p-6 max-w-sm w-full relative shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center gap-3 mb-4">
+                            <Database className="h-5 w-5 text-purple-400" />
+                            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Save Blueprint to Vault</h2>
+                        </div>
+                        <p className="text-[10px] text-white/50 font-mono mb-4">Save this architecture state as a reusable blueprint. It will be available organization-wide in the Project Vault.</p>
+                        <input
+                            type="text"
+                            value={vaultName}
+                            onChange={(e) => setVaultName(e.target.value)}
+                            placeholder="e.g. Production EKS Baseline"
+                            autoFocus
+                            className="w-full bg-white/[0.04] border border-white/[0.08] focus:border-purple-500/50 p-3 text-xs text-white placeholder-white/20 mb-4 outline-none transition-colors font-mono"
+                        />
+                        <div className="flex gap-2 justify-end mt-2">
+                            <button
+                                onClick={() => setShowVaultDialog(false)}
+                                className="px-4 py-2 text-[10px] font-mono uppercase tracking-widest text-white/50 hover:text-white transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSaveToVault}
+                                disabled={isSavingVault || !vaultName.trim() || nodes.length === 0}
+                                className="px-5 py-2 text-[10px] font-mono font-bold uppercase tracking-widest bg-purple-500/20 text-purple-300 hover:bg-purple-500 hover:text-white border border-purple-500/30 transition-colors disabled:opacity-50 flex items-center gap-2"
+                            >
+                                {isSavingVault ? <Activity className="w-3 h-3 animate-pulse" /> : <Database className="w-3 h-3" />}
+                                Save to Vault
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Main Canvas Area */}
             <div className="flex-1 h-full bg-[#060606] relative" ref={reactFlowWrapper}>
@@ -1818,120 +1985,141 @@ function ArchitectContent() {
 
                 {/* Attack Scenario Simulator Panel */}
                 {showAttackPanel && (
-                    <div className="absolute bottom-20 right-4 w-96 z-40 animate-in slide-in-from-bottom-8 fade-in duration-300 pointer-events-auto">
-                        <div className="bg-black/92 backdrop-blur-2xl border border-rose-500/20 rounded-2xl shadow-[0_0_60px_rgba(244,63,94,0.12)] overflow-hidden">
+                    <div className="absolute top-24 bottom-6 right-6 w-[420px] z-40 animate-in slide-in-from-right-8 fade-in duration-300 pointer-events-auto flex flex-col">
+                        <div className="bg-[#101014]/95 backdrop-blur-xl border-l-2 border-y border-r border-white/5 shadow-[-20px_0_50px_rgba(0,0,0,0.5)] flex-1 overflow-hidden flex flex-col relative"
+                            style={{ borderColor: runningScenario ? runningScenario.color : '#00E5A0', borderLeftWidth: '2px' }}>
+
+                            {/* Scanline overlay */}
+                            <div className="absolute inset-0 pointer-events-none opacity-10" style={{
+                                backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, #fff 2px, #fff 3px)',
+                                backgroundSize: '100% 3px'
+                            }} />
+
                             {/* Header */}
-                            <div className="p-4 border-b border-white/5 bg-gradient-to-r from-rose-950/50 to-transparent flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    <div className="p-1.5 bg-rose-500/10 border border-rose-500/20 rounded-lg">
-                                        <ShieldAlert className="h-4 w-4 text-rose-400 animate-pulse" />
+                            <div className="p-5 border-b border-white/10 bg-black/40 flex items-center justify-between relative z-10 shrink-0">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 border border-white/10" style={{ backgroundColor: runningScenario ? `${runningScenario.color}15` : '#00E5A015', borderColor: runningScenario ? `${runningScenario.color}40` : '#00E5A040' }}>
+                                        <ShieldAlert className="h-5 w-5" style={{ color: runningScenario ? runningScenario.color : '#00E5A0' }} />
                                     </div>
                                     <div>
-                                        <div className="text-sm font-bold text-white tracking-tight">Attack Scenario Lab</div>
-                                        <div className="text-[10px] text-white/30 font-mono">MITRE ATT&amp;CK Visualization Engine</div>
+                                        <div className="text-sm font-bold text-white tracking-widest uppercase">Threat Simulator</div>
+                                        <div className="text-[10px] text-white/40 font-mono tracking-wider">MITRE ATT&amp;CK ENGINE</div>
                                     </div>
                                 </div>
-                                <button onClick={() => setShowAttackPanel(false)} className="text-white/30 hover:text-white/80 text-lg leading-none transition-colors">✕</button>
+                                <button onClick={() => setShowAttackPanel(false)} className="text-white/30 hover:text-white/80 p-2 border border-transparent hover:border-white/10 transition-colors bg-white/5 hover:bg-white/10">✕</button>
                             </div>
 
                             {/* Scenario Picker Grid */}
                             {!runningScenario && (
-                                <div className="p-4">
-                                    <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] font-bold mb-3">Select Attack Vector</div>
-                                    <div className="grid grid-cols-2 gap-2">
+                                <div className="p-5 overflow-y-auto flex-1 custom-scrollbar relative z-10">
+                                    <div className="text-[10px] text-[#00E5A0] uppercase tracking-[0.2em] font-bold mb-4 flex items-center gap-2">
+                                        <span className="h-px bg-[#00E5A0]/30 flex-1" />
+                                        Select Vector
+                                        <span className="h-px bg-[#00E5A0]/30 flex-1" />
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-3">
                                         {ATTACK_SCENARIOS.map(scenario => (
                                             <button
                                                 key={scenario.id}
                                                 onClick={() => runAttackScenario(scenario)}
-                                                className="group flex flex-col gap-1.5 bg-black/40 border border-white/5 hover:border-white/20 rounded-xl p-3 text-left transition-all duration-200 hover:scale-[1.02]"
-                                                style={{ '--glow-color': scenario.glow } as React.CSSProperties}
+                                                className="group flex flex-col gap-2 bg-[#101014] border hover:border-l-2 transition-all duration-200 p-4 text-left"
+                                                style={{ borderColor: 'rgba(255,255,255,0.08)', borderLeftColor: scenario.color }}
                                             >
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-2xl leading-none">{scenario.icon}</span>
-                                                    <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border" style={{ color: scenario.color, borderColor: `${scenario.color}40`, backgroundColor: `${scenario.color}10` }}>
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="text-xl px-2 py-1 bg-white/5 border border-white/10 leading-none">{scenario.icon}</span>
+                                                        <div>
+                                                            <div className="text-xs font-bold text-white uppercase tracking-wider group-hover:text-white transition-colors leading-tight">{scenario.label}</div>
+                                                            <div className="text-[9px] text-white/40 leading-relaxed font-mono mt-0.5">{scenario.description}</div>
+                                                        </div>
+                                                    </div>
+                                                    <span className="text-[9px] font-bold font-mono tracking-widest px-2 py-1 border ml-2 shrink-0" style={{ color: scenario.color, borderColor: `${scenario.color}40`, backgroundColor: `${scenario.color}10` }}>
                                                         {scenario.mitreId}
                                                     </span>
                                                 </div>
-                                                <div className="text-xs font-bold text-white/90 group-hover:text-white transition-colors leading-tight">{scenario.label}</div>
-                                                <div className="text-[9px] text-white/30 leading-relaxed line-clamp-2 group-hover:text-white/50 transition-colors">{scenario.description}</div>
                                             </button>
                                         ))}
                                     </div>
-                                    <div className="mt-3 text-[9px] text-white/20 text-center">
-                                        Drag an <span className="text-rose-400/60">Attacker Machine</span> onto the canvas, then select a scenario to visualize
+                                    <div className="mt-5 text-[10px] text-white/30 font-mono text-center border border-white/10 p-3 bg-white/5">
+                                        Drag <span className="text-[#FF3131] font-bold">Attacker</span> onto canvas to evaluate specific vectors.
                                     </div>
                                 </div>
                             )}
 
                             {/* Live Simulation Log */}
                             {runningScenario && (
-                                <div className="p-4">
+                                <div className="p-0 flex flex-col flex-1 relative z-10 overflow-hidden">
                                     {/* Active scenario header */}
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-xl">{runningScenario.icon}</span>
-                                            <div>
-                                                <div className="text-sm font-bold" style={{ color: runningScenario.color }}>{runningScenario.label}</div>
-                                                <div className="text-[9px] text-white/30 font-mono">{runningScenario.mitreId} · {runningScenario.mitreTactic}</div>
+                                    <div className="p-5 border-b border-white/10 bg-black/40 shrink-0">
+                                        <div className="flex items-start justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-2xl p-2 bg-white/5 border border-white/10 leading-none">{runningScenario?.icon}</span>
+                                                <div>
+                                                    <div className="text-sm font-bold uppercase tracking-widest" style={{ color: runningScenario?.color }}>{runningScenario?.label}</div>
+                                                    <div className="text-[10px] text-white/40 font-mono tracking-wider">{runningScenario?.mitreId} · {runningScenario?.mitreTactic}</div>
+                                                </div>
                                             </div>
+                                            {!scenarioComplete ? (
+                                                <div className="flex items-center gap-2 text-[10px] font-bold tracking-widest uppercase border px-2 py-1" style={{ color: runningScenario?.color, borderColor: `${runningScenario?.color}40`, backgroundColor: `${runningScenario?.color}10` }}>
+                                                    <div className="h-1.5 w-1.5 animate-pulse" style={{ backgroundColor: runningScenario?.color }} />
+                                                    RUNNING
+                                                </div>
+                                            ) : (
+                                                <span className="text-[10px] text-[#FF3131] font-bold uppercase tracking-widest bg-[#FF3131]/10 px-2 py-1 border border-[#FF3131]/30">
+                                                    ⚠ SIMULATION COMPLETE
+                                                </span>
+                                            )}
                                         </div>
-                                        {!scenarioComplete ? (
-                                            <div className="flex items-center gap-1.5 text-[9px] text-white/40">
-                                                <div className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ backgroundColor: runningScenario.color }} />
-                                                RUNNING...
-                                            </div>
-                                        ) : (
-                                            <span className="text-[9px] text-rose-400 font-bold uppercase tracking-wider bg-rose-950/50 px-2 py-1 rounded border border-rose-500/30">⚠ Breach Complete</span>
-                                        )}
                                     </div>
 
                                     {/* Progress bar */}
-                                    <div className="h-1 bg-white/5 rounded-full mb-4 overflow-hidden">
+                                    <div className="h-0.5 w-full bg-white/10 shrink-0">
                                         <div
-                                            className="h-full rounded-full transition-all duration-700"
+                                            className="h-full transition-all duration-700"
                                             style={{
-                                                width: `${runningScenario.killChain.length > 0 ? ((scenarioStep + 1) / runningScenario.killChain.length) * 100 : 0}%`,
-                                                backgroundColor: runningScenario.color,
-                                                boxShadow: `0 0 10px ${runningScenario.glow}`
+                                                width: `${runningScenario?.killChain.length > 0 ? ((scenarioStep + 1) / runningScenario?.killChain.length) * 100 : 0}%`,
+                                                backgroundColor: runningScenario?.color,
+                                                boxShadow: `0 0 10px ${runningScenario?.glow}`
                                             }}
                                         />
                                     </div>
 
                                     {/* Kill chain log - live updates */}
-                                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
+                                    <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar bg-gradient-to-b from-black/20 to-transparent">
                                         {scenarioLog.map((entry, i) => (
-                                            <div key={i} className="flex gap-3 animate-in slide-in-from-left-4 fade-in duration-400">
-                                                <div className="flex-shrink-0 mt-1 w-4 h-4 rounded flex items-center justify-center" style={{ backgroundColor: `${runningScenario.color}20`, border: `1px solid ${runningScenario.color}40` }}>
-                                                    <span className="text-[8px] font-bold" style={{ color: runningScenario.color }}>{i + 1}</span>
+                                            <div key={i} className="flex gap-4 animate-in slide-in-from-left-4 fade-in duration-400 group">
+                                                <div className="flex-shrink-0 mt-0.5 w-6 h-6 border flex items-center justify-center font-mono text-[10px] font-bold transition-colors"
+                                                    style={{ backgroundColor: `${runningScenario?.color}10`, borderColor: `${runningScenario?.color}40`, color: runningScenario?.color }}>
+                                                    {i + 1}
                                                 </div>
-                                                <div>
-                                                    <div className="text-xs font-bold text-white/90 mb-0.5">{entry.step}</div>
-                                                    <div className="text-[9px] text-white/40 leading-relaxed font-mono">{entry.detail}</div>
+                                                <div className="flex-1 pb-4 border-b border-white/5 group-last:border-0 group-last:pb-0">
+                                                    <div className="text-xs font-bold text-white uppercase tracking-widest mb-1">{entry.step}</div>
+                                                    <div className="text-[10px] text-white/50 leading-relaxed font-mono whitespace-pre-wrap">{entry.detail}</div>
                                                 </div>
                                             </div>
                                         ))}
                                         {!scenarioComplete && (
-                                            <div className="flex items-center gap-2 text-[9px] text-white/20 pl-7 font-mono">
-                                                <span className="animate-pulse">▋</span>&nbsp;Processing next phase...
+                                            <div className="flex items-center gap-2 text-[10px] text-[#00E5A0] font-mono tracking-widest uppercase mt-4">
+                                                <span className="animate-pulse">_</span> EVALUATING NEXT PHASE...
                                             </div>
                                         )}
                                     </div>
 
                                     {/* Action buttons */}
-                                    <div className="flex gap-2 mt-4">
+                                    <div className="p-5 border-t border-white/10 bg-black/40 flex gap-3 shrink-0">
                                         <button
                                             onClick={stopAttackScenario}
-                                            className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white text-xs font-bold py-2 rounded-lg transition-all"
+                                            className="flex-1 bg-white/5 hover:bg-[#FF3131] border border-white/10 hover:border-[#FF3131] text-white/60 hover:text-white text-xs font-bold uppercase tracking-widest py-3 transition-colors text-center"
                                         >
-                                            ✕ Stop &amp; Clear
+                                            TERMINATE
                                         </button>
                                         {scenarioComplete && (
                                             <button
                                                 onClick={() => { stopAttackScenario(); }}
-                                                className="flex-1 text-xs font-bold py-2 rounded-lg border transition-all"
-                                                style={{ backgroundColor: `${runningScenario.color}15`, borderColor: `${runningScenario.color}40`, color: runningScenario.color }}
+                                                className="flex-1 text-xs font-bold uppercase tracking-widest py-3 border transition-colors text-center"
+                                                style={{ backgroundColor: `${runningScenario?.color}15`, borderColor: `${runningScenario?.color}50`, color: runningScenario?.color }}
                                             >
-                                                ↩ Try Another
+                                                RESET
                                             </button>
                                         )}
                                     </div>
@@ -1969,12 +2157,12 @@ function ArchitectContent() {
                         <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] mb-1 font-mono">Architecture Risk</div>
                         {simulationResults ? (
                             <div className="flex items-end gap-2">
-                                <span className={`text-2xl font-bold leading-none font-mono ${simulationResults.impactScore > 70 ? 'text-red-400' :
-                                    simulationResults.impactScore > 40 ? 'text-amber-400' : 'text-emerald-400'
-                                    }`}>{simulationResults.impactScore}</span>
-                                <span className={`text-xs font-semibold mb-0.5 ${simulationResults.impactScore > 70 ? 'text-red-500/70' :
-                                    simulationResults.impactScore > 40 ? 'text-amber-500/70' : 'text-emerald-500/70'
-                                    }`}>{simulationResults.impactScore > 70 ? '⬛ CRITICAL' : simulationResults.impactScore > 40 ? '▲ ELEVATED' : '✓ SECURE'}</span>
+                                <span className={`text-2xl font-bold leading-none font-mono ${simulationResults?.impactScore > 70 ? 'text-red-400' :
+                                    simulationResults?.impactScore > 40 ? 'text-amber-400' : 'text-emerald-400'
+                                    }`}>{simulationResults?.impactScore}</span>
+                                <span className={`text-xs font-semibold mb-0.5 ${simulationResults?.impactScore > 70 ? 'text-red-500/70' :
+                                    simulationResults?.impactScore > 40 ? 'text-amber-500/70' : 'text-emerald-500/70'
+                                    }`}>{simulationResults?.impactScore > 70 ? '⬛ CRITICAL' : simulationResults?.impactScore > 40 ? '▲ ELEVATED' : '✓ SECURE'}</span>
                             </div>
                         ) : (
                             <div className="text-xs text-white/20 font-mono">— Not simulated</div>
@@ -2825,21 +3013,29 @@ function ArchitectContent() {
             {/* Compliance & Threat Report Overlay */}
             {
                 simulationResults && (
-                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 md:p-8 animate-in fade-in duration-300">
-                        <div className="bg-[#111] border border-red-500/20 rounded-2xl w-full max-w-6xl max-h-full flex flex-col shadow-[0_0_100px_rgba(239,68,68,0.1)] relative overflow-hidden">
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#060606]/95 backdrop-blur-md p-4 md:p-8 animate-in fade-in duration-300">
+                        {/* Scanline overlay for the whole report background */}
+                        <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{
+                            backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, #00E5A0 2px, #00E5A0 3px)',
+                            backgroundSize: '100% 3px'
+                        }} />
+
+                        <div className="bg-[#0a0a0a] border border-[#FF3131]/30 w-full max-w-6xl max-h-full flex flex-col shadow-[0_0_80px_rgba(255,49,49,0.15)] relative overflow-hidden" style={{ borderTopWidth: '3px', borderTopColor: '#FF3131' }}>
 
                             {/* Header */}
-                            <div className="p-6 border-b border-white/10 bg-gradient-to-r from-red-500/5 via-transparent to-transparent flex items-center justify-between sticky top-0 z-10 backdrop-blur-xl">
+                            <div className="p-6 border-b border-white/10 bg-black/60 flex items-center justify-between sticky top-0 z-20 backdrop-blur-xl shrink-0">
                                 <div className="flex items-center space-x-4">
-                                    <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
-                                        <ShieldAlert className="h-6 w-6 text-red-400" />
+                                    <div className="p-3 bg-[#FF3131]/10 border border-[#FF3131]/30 flex items-center justify-center">
+                                        <ShieldAlert className="h-6 w-6 text-[#FF3131]" />
                                     </div>
                                     <div>
-                                        <h2 className="text-xl font-bold text-white tracking-tight">Enterprise Threat Analysis Report</h2>
-                                        <p className="text-sm text-white/50">DFS Attack Simulation · MITRE ATT&CK · Compliance Mapping</p>
+                                        <h2 className="text-xl font-bold text-white tracking-widest uppercase">After-Action Intel Report</h2>
+                                        <div className="text-[10px] text-white/50 font-mono tracking-wider mt-1 flex items-center gap-2">
+                                            <span className="text-[#00E5A0] animate-pulse">●</span> LIVE SIMULATION RESULTS · MITRE ATT&CK
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-6">
                                     <button
                                         onClick={() => setZeroTrustMode(z => !z)}
                                         className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all ${zeroTrustMode ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_15px_rgba(6,182,212,0.3)]' : 'bg-white/5 text-white/40 border-white/10 hover:border-white/30'}`}
@@ -2847,89 +3043,93 @@ function ArchitectContent() {
                                         <Shield className="h-3 w-3" />
                                         Zero Trust {zeroTrustMode ? 'ON' : 'OFF'}
                                     </button>
-                                    <div className="text-right">
-                                        <div className="text-xs text-white/50 uppercase tracking-wider mb-1">Exposure Index</div>
-                                        <div className={`text-2xl font-bold ${simulationResults.impactScore > 70 ? 'text-red-500' : simulationResults.impactScore > 30 ? 'text-yellow-500' : 'text-cyan-500'}`}>
-                                            {zeroTrustMode ? Math.round(simulationResults.impactScore * 0.45) : simulationResults.impactScore} <span className="text-sm font-medium opacity-50">/100</span>
+                                    <div className="text-right border-l border-white/10 pl-6">
+                                        <div className="text-[10px] text-white/50 uppercase tracking-widest font-mono mb-1">Exposure Index</div>
+                                        <div className={`text-3xl font-bold font-mono ${simulationResults?.impactScore > 70 ? 'text-[#FF3131]' : simulationResults?.impactScore > 30 ? 'text-amber-400' : 'text-[#00E5A0]'}`}>
+                                            {zeroTrustMode ? Math.round(simulationResults?.impactScore * 0.45) : simulationResults?.impactScore}<span className="text-sm font-normal text-white/30 ml-1">/100</span>
                                         </div>
                                     </div>
                                     <button
                                         onClick={() => setSimulationResults(null)}
-                                        className="p-2 hover:bg-white/10 text-white/50 hover:text-white rounded-lg transition-colors border border-transparent hover:border-white/20"
+                                        className="p-3 bg-white/5 hover:bg-[#FF3131] border border-white/10 hover:border-[#FF3131] text-white/60 hover:text-white transition-colors"
                                     >
-                                        ✕
+                                        <span className="font-mono text-xs font-bold uppercase tracking-widest">Close</span>
                                     </button>
                                 </div>
                             </div>
 
                             {/* Financial Impact Banner */}
                             {financialImpact && (
-                                <div className={`mx-6 mt-6 p-5 border rounded-2xl flex flex-wrap gap-6 items-center justify-between shadow-lg transition-colors ${simulationResults.impactScore > 0
-                                    ? 'bg-gradient-to-r from-red-950/80 to-orange-950/60 border-red-500/20 shadow-red-900/20'
-                                    : 'bg-gradient-to-r from-emerald-950/40 to-cyan-950/40 border-emerald-500/20 shadow-emerald-900/10'
+                                <div className={`m-6 p-6 border flex flex-wrap gap-8 items-center justify-between transition-colors ${simulationResults?.impactScore > 0
+                                    ? 'bg-[#FF3131]/5 border-[#FF3131]/30 shadow-[inset_0_0_40px_rgba(255,49,49,0.05)]'
+                                    : 'bg-[#00E5A0]/5 border-[#00E5A0]/30 shadow-[inset_0_0_40px_rgba(0,229,160,0.05)]'
                                     }`}>
                                     <div>
-                                        <div className={`text-xs uppercase tracking-widest mb-1 font-bold ${simulationResults.impactScore > 0 ? 'text-red-400/70' : 'text-emerald-400/70'}`}>Estimated Breach Cost</div>
-                                        <div className={`text-3xl font-bold ${simulationResults.impactScore > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                                            {simulationResults.impactScore > 0 ? `₹${financialImpact.rangeLow}Cr – ₹${financialImpact.rangeHigh}Cr` : '₹0 (Secure)'}
+                                        <div className={`text-[10px] uppercase tracking-widest font-mono mb-1.5 font-bold ${simulationResults?.impactScore > 0 ? 'text-[#FF3131]/70' : 'text-[#00E5A0]/70'}`}>Estimated Breach Cost</div>
+                                        <div className={`text-3xl font-mono ${simulationResults?.impactScore > 0 ? 'text-[#FF3131]' : 'text-[#00E5A0]'}`}>
+                                            {simulationResults?.impactScore > 0 ? `₹${financialImpact?.rangeLow}Cr – ${financialImpact?.rangeHigh}Cr` : '₹0 (Secure)'}
                                         </div>
-                                        <div className="text-[10px] text-white/30 mt-1 uppercase tracking-wider">Source: IBM Cost of Data Breach Report 2024</div>
+                                        <div className="text-[9px] text-white/30 mt-1.5 font-mono uppercase tracking-widest">Source: IBM Cost of Data Breach</div>
                                     </div>
-                                    <div className="h-12 w-px bg-white/10 hidden md:block" />
+                                    <div className="h-10 w-px bg-white/10 hidden md:block" />
                                     <div className="text-center">
-                                        <div className={`text-xs uppercase tracking-widest mb-1 font-bold ${simulationResults.impactScore > 0 ? 'text-orange-400/70' : 'text-emerald-400/70'}`}>Est. Downtime</div>
-                                        <div className={`text-3xl font-light ${simulationResults.impactScore > 0 ? 'text-orange-400' : 'text-white'}`}>{financialImpact.downtimeHours}h</div>
+                                        <div className={`text-[10px] uppercase tracking-widest font-mono mb-1.5 font-bold ${simulationResults?.impactScore > 0 ? 'text-amber-500/70' : 'text-[#00E5A0]/70'}`}>Est. Downtime</div>
+                                        <div className={`text-3xl font-mono ${simulationResults?.impactScore > 0 ? 'text-amber-500' : 'text-white'}`}>{financialImpact?.downtimeHours}h</div>
                                     </div>
-                                    <div className="h-12 w-px bg-white/10 hidden md:block" />
+                                    <div className="h-10 w-px bg-white/10 hidden md:block" />
                                     <div className="text-center">
-                                        <div className={`text-xs uppercase tracking-widest mb-1 font-bold ${simulationResults.impactScore > 0 ? 'text-yellow-400/70' : 'text-emerald-400/70'}`}>Records at Risk</div>
-                                        <div className={`text-3xl font-light ${simulationResults.impactScore > 0 ? 'text-yellow-400' : 'text-white'}`}>{financialImpact.recordsAtRisk.toLocaleString()}</div>
+                                        <div className={`text-[10px] uppercase tracking-widest font-mono mb-1.5 font-bold ${simulationResults?.impactScore > 0 ? 'text-orange-500/70' : 'text-[#00E5A0]/70'}`}>Records at Risk</div>
+                                        <div className={`text-3xl font-mono ${simulationResults?.impactScore > 0 ? 'text-orange-500' : 'text-white'}`}>{financialImpact?.recordsAtRisk.toLocaleString()}</div>
                                     </div>
-                                    <div className="h-12 w-px bg-white/10 hidden md:block" />
+                                    <div className="h-10 w-px bg-white/10 hidden md:block" />
                                     <div className="text-center hidden md:block pr-4">
-                                        <div className="text-xs text-white/40 uppercase tracking-widest mb-1 font-bold">Blast Radius</div>
-                                        <div className="text-3xl font-bold text-white">
-                                            {simulationResults.compromisedNodes.length}
-                                            <span className="text-sm font-normal text-white/40 ml-1">/ {nodes.length} nodes</span>
+                                        <div className="text-[10px] uppercase tracking-widest font-mono mb-1.5 font-bold text-white/40">Blast Radius</div>
+                                        <div className="text-3xl font-mono text-white">
+                                            {simulationResults?.compromisedNodes.length}
+                                            <span className="text-sm font-sans text-white/40 ml-1">/ {nodes.length}</span>
                                         </div>
                                     </div>
                                 </div>
                             )}
 
                             {/* Findings Content */}
-                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                            <div className="flex-1 overflow-y-auto px-6 pb-6 custom-scrollbar">
 
                                 {/* Zing AI Executive Summary Card */}
-                                <div className="mb-8 p-1 rounded-2xl bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-transparent">
-                                    <div className="bg-black/80 backdrop-blur-xl border border-white/5 rounded-xl p-6">
-                                        <div className="flex items-center space-x-3 mb-4">
-                                            <div className="p-2 rounded-lg bg-cyan-500/10">
-                                                <Sparkles className="h-5 w-5 text-cyan-400" />
+                                <div className="mb-8 border border-[#00E5A0]/30 bg-[#00E5A0]/5 relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 bottom-0 w-1 bg-[#00E5A0]" />
+                                    <div className="p-6">
+                                        <div className="flex items-center justify-between mb-5">
+                                            <div className="flex items-center space-x-3">
+                                                <div className="p-2 bg-[#00E5A0]/10 border border-[#00E5A0]/20">
+                                                    <Terminal className="h-5 w-5 text-[#00E5A0]" />
+                                                </div>
+                                                <h3 className="text-sm font-bold uppercase tracking-widest text-[#00E5A0] flex items-center">
+                                                    Zin AI Briefing
+                                                </h3>
                                             </div>
-                                            <h3 className="text-lg font-semibold text-white flex items-center">
-                                                Zin AI Executive Summary
-                                            </h3>
+                                            <div className="text-[9px] font-mono text-[#00E5A0]/50 tracking-widest">AUTO-GENERATED INTELLIGENCE</div>
                                         </div>
 
                                         {isGeneratingAi ? (
-                                            <div className="flex items-center space-x-3 text-white/50 py-4">
-                                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-500"></div>
-                                                <span className="text-sm">Zin AI is analyzing the threat graph and generating an executive brief...</span>
+                                            <div className="flex items-center space-x-3 text-[#00E5A0]/50 py-4 font-mono text-[10px] uppercase tracking-widest">
+                                                <div className="animate-pulse">_</div>
+                                                <span>Zin AI is analyzing the threat graph and generating an intelligence brief...</span>
                                             </div>
                                         ) : (
                                             <div className="space-y-4">
-                                                <div className="prose prose-invert max-w-none text-white/80 text-sm leading-relaxed whitespace-pre-wrap">
+                                                <div className="text-[#00E5A0]/80 text-sm leading-relaxed whitespace-pre-wrap font-mono relative pl-4 border-l border-[#00E5A0]/20">
                                                     {aiSummary}
                                                 </div>
-                                                {simulationResults && simulationResults.findings && simulationResults.findings.length > 0 && (
-                                                    <div className="pt-4 border-t border-white/10 flex items-center justify-between">
-                                                        <div className="text-xs text-white/40">Zin AI can automatically apply recommended security controls to your nodes.</div>
+                                                {simulationResults && simulationResults?.findings && simulationResults?.findings.length > 0 && (
+                                                    <div className="pt-5 mt-5 border-t border-[#00E5A0]/20 flex items-center justify-between">
+                                                        <div className="text-[10px] font-mono text-[#00E5A0]/50 tracking-wider">Zin AI can autonomously apply the recommended securing controls below.</div>
                                                         <button
                                                             onClick={handleAutoFix}
-                                                            className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white text-xs font-bold uppercase tracking-widest rounded-lg flex items-center shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all hover:scale-105"
+                                                            className="px-6 py-3 bg-white/5 hover:bg-[#00E5A0] hover:text-black border border-[#00E5A0]/50 text-[#00E5A0] text-[10px] font-bold uppercase tracking-widest flex items-center transition-all"
                                                         >
                                                             <Sparkles className="h-4 w-4 mr-2 mb-0.5" />
-                                                            Auto-Remediate Architecture
+                                                            Apply Auto-Remediation
                                                         </button>
                                                     </div>
                                                 )}
@@ -2942,12 +3142,12 @@ function ArchitectContent() {
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
 
                                     <div className="space-y-6">
-                                        <div className="flex items-center justify-between">
-                                            <h3 className="text-sm font-semibold uppercase text-white/50 tracking-wider">Breach Analysis</h3>
+                                        <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                                            <h3 className="text-xs font-bold uppercase text-white tracking-widest flex items-center gap-2"><Activity className="w-4 h-4 text-white/50" /> Breach Metrics</h3>
                                             <button
                                                 onClick={handleReplayBreach}
                                                 disabled={isReplaying || compromisedInfrastructureCount === 0}
-                                                className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-widest flex items-center transition-all ${isReplaying || compromisedInfrastructureCount === 0 ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/10' : 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]'}`}
+                                                className={`px-4 py-2 text-[10px] font-bold uppercase tracking-widest flex items-center transition-all ${isReplaying || compromisedInfrastructureCount === 0 ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/10' : 'bg-[#FF3131]/10 border border-[#FF3131]/40 text-[#FF3131] hover:bg-[#FF3131] hover:text-white'}`}
                                             >
                                                 <Activity className={`h-3 w-3 mr-2 ${isReplaying ? 'animate-spin' : ''}`} />
                                                 {isReplaying ? 'Replaying...' : 'Replay Breach'}
@@ -2955,47 +3155,49 @@ function ArchitectContent() {
                                         </div>
 
                                         <div className="grid grid-cols-2 gap-4">
-                                            <div className="bg-gradient-to-br from-white/5 to-white/0 border border-white/10 rounded-xl p-5 flex flex-col justify-center relative overflow-hidden">
-                                                <div className="text-xs text-white/40 uppercase tracking-wider mb-2 font-bold z-10">Compromised Nodes</div>
-                                                <div className={`text-5xl font-light z-10 ${compromisedInfrastructureCount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                            <div className="bg-[#101014] border border-white/10 p-5 flex flex-col justify-center relative overflow-hidden group hover:border-[#FF3131]/50 transition-colors">
+                                                <div className="text-[10px] text-white/40 uppercase tracking-widest mb-3 font-bold font-mono z-10 transition-colors group-hover:text-white">Compromised Assets</div>
+                                                <div className={`text-4xl font-mono z-10 ${compromisedInfrastructureCount > 0 ? 'text-[#FF3131]' : 'text-[#00E5A0]'}`}>
                                                     {compromisedInfrastructureCount}
                                                 </div>
-                                                <Activity className="absolute -right-4 -bottom-4 h-24 w-24 text-white/[0.03] transform -rotate-12" />
+                                                <Activity className="absolute -right-4 -bottom-4 h-24 w-24 text-white/[0.02] transform -rotate-12 group-hover:text-[#FF3131]/10 transition-colors" />
                                             </div>
-                                            <div className="bg-gradient-to-br from-white/5 to-white/0 border border-white/10 rounded-xl p-5 flex flex-col justify-center relative overflow-hidden">
-                                                <div className="text-xs text-white/40 uppercase tracking-wider mb-2 font-bold z-10">Critical Findings</div>
-                                                <div className={`text-5xl font-light z-10 ${simulationResults.findings.filter((f: any) => f.severity === 'Critical').length > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                                                    {simulationResults.findings.filter((f: any) => f.severity === 'Critical').length}
+                                            <div className="bg-[#101014] border border-white/10 p-5 flex flex-col justify-center relative overflow-hidden group hover:border-[#FF3131]/50 transition-colors">
+                                                <div className="text-[10px] text-white/40 uppercase tracking-widest mb-3 font-bold font-mono z-10 transition-colors group-hover:text-white">Critical Findings</div>
+                                                <div className={`text-5xl font-mono z-10 ${simulationResults?.findings.filter((f: any) => f.severity === 'Critical').length > 0 ? 'text-[#FF3131]' : 'text-[#00E5A0]'}`}>
+                                                    {simulationResults?.findings.filter((f: any) => f.severity === 'Critical').length}
                                                 </div>
-                                                <ShieldAlert className="absolute -right-4 -bottom-4 h-24 w-24 text-white/[0.03] transform rotate-12" />
+                                                <ShieldAlert className="absolute -right-4 -bottom-4 h-24 w-24 text-white/[0.02] transform rotate-12 group-hover:text-[#FF3131]/10 transition-colors" />
                                             </div>
-                                            <div className="bg-gradient-to-r from-white/5 to-transparent border border-white/10 rounded-xl p-5 col-span-2 flex items-center justify-between group hover:bg-white/10 transition-colors cursor-default">
+                                            <div className="bg-[#101014] border border-white/10 p-5 col-span-2 flex items-center justify-between group hover:border-amber-500/50 transition-colors cursor-default">
                                                 <div>
-                                                    <div className="text-xs text-white/40 uppercase tracking-wider mb-1 font-bold">Compliance Violations</div>
-                                                    <div className={`text-2xl font-light ${simulationResults.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length > 0 ? 'text-yellow-500' : 'text-emerald-500'}`}>
-                                                        {simulationResults.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length} Policy Gaps Detected
+                                                    <div className="text-[10px] text-white/40 uppercase tracking-widest mb-2 font-bold font-mono group-hover:text-white transition-colors">Compliance Violations</div>
+                                                    <div className={`text-2xl font-mono ${simulationResults?.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length > 0 ? 'text-amber-400' : 'text-[#00E5A0]'}`}>
+                                                        {simulationResults?.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length} Policy Gaps Detected
                                                     </div>
                                                 </div>
-                                                <FileCheck className={`h-10 w-10 ${simulationResults.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length > 0 ? 'text-yellow-500/40 group-hover:text-yellow-500/60' : 'text-emerald-500/40 group-hover:text-emerald-500/60'} transition-colors`} />
+                                                <FileCheck className={`h-12 w-12 ${simulationResults?.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length > 0 ? 'text-amber-500/20 group-hover:text-amber-500/40' : 'text-[#00E5A0]/20 group-hover:text-[#00E5A0]/40'} transition-colors`} />
                                             </div>
                                         </div>
                                     </div>
 
                                     {/* Compliance Radar Chart */}
-                                    <div className="bg-[#0a0a0a] border border-white/5 rounded-xl p-4 relative overflow-hidden flex flex-col">
-                                        <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 flex items-center absolute top-4 left-4 z-10">
+                                    <div className="bg-[#101014] border border-[#00E5A0]/20 p-5 relative overflow-hidden flex flex-col group hover:border-[#00E5A0]/50 transition-colors">
+                                        <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-[#00E5A0]/10 to-transparent pointer-events-none" />
+                                        <h3 className="text-[10px] font-bold uppercase text-[#00E5A0] tracking-widest mb-4 flex items-center z-10 font-mono relative">
                                             <ShieldAlert className="h-4 w-4 mr-2" /> Coverage Matrix
+                                            <div className="h-px bg-[#00E5A0]/20 flex-1 ml-4" />
                                         </h3>
-                                        <div className="flex-1 w-full h-[250px] mt-6">
+                                        <div className="flex-1 w-full h-[250px] mt-2">
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <RadarChart cx="50%" cy="50%" outerRadius="70%" data={complianceData}>
                                                     <PolarGrid stroke="#333" />
-                                                    <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 10 }} />
+                                                    <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 10, fontFamily: 'monospace' }} />
                                                     <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} stroke="#333" />
-                                                    <Radar name="Coverage %" dataKey="A" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.2} />
+                                                    <Radar name="Coverage %" dataKey="A" stroke="#00E5A0" fill="#00E5A0" fillOpacity={0.15} />
                                                     <Tooltip
-                                                        contentStyle={{ backgroundColor: '#000', borderColor: '#333', borderRadius: '8px' }}
-                                                        itemStyle={{ color: '#06b6d4', fontWeight: 'bold' }}
+                                                        contentStyle={{ backgroundColor: '#101014', borderColor: '#00E5A0', borderRadius: '0', borderWidth: '1px', fontFamily: 'monospace', fontSize: '10px' }}
+                                                        itemStyle={{ color: '#00E5A0', fontWeight: 'bold' }}
                                                     />
                                                 </RadarChart>
                                             </ResponsiveContainer>
@@ -3005,44 +3207,45 @@ function ArchitectContent() {
 
                                 {/* Compliance Gap Table */}
                                 <div className="mb-8">
-                                    <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 border-b border-white/10 pb-2 flex items-center">
+                                    <h3 className="text-[10px] font-bold uppercase text-[#00E5A0] tracking-widest mb-4 flex items-center font-mono">
                                         <FileCheck className="h-4 w-4 mr-2" /> Compliance Framework Coverage
+                                        <div className="h-px bg-[#00E5A0]/20 flex-1 ml-4" />
                                     </h3>
-                                    <div className="overflow-x-auto">
+                                    <div className="overflow-x-auto border border-white/10 bg-[#101014]">
                                         <table className="w-full text-sm">
                                             <thead>
-                                                <tr className="text-xs uppercase tracking-widest text-white/30 border-b border-white/5">
-                                                    <th className="text-left py-2 pr-4">Framework</th>
-                                                    <th className="text-left py-2 pr-4">Authority</th>
-                                                    <th className="text-left py-2 pr-4">Coverage</th>
-                                                    <th className="text-left py-2">Identified Gaps</th>
+                                                <tr className="text-[9px] uppercase tracking-widest text-[#00E5A0]/70 border-b border-white/10 bg-black/40 font-mono">
+                                                    <th className="text-left py-3 px-4 font-bold">Framework</th>
+                                                    <th className="text-left py-3 px-4 font-bold">Authority</th>
+                                                    <th className="text-left py-3 px-4 font-bold">Coverage</th>
+                                                    <th className="text-left py-3 px-4 font-bold">Identified Gaps</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {complianceTableData.map((row, i) => (
-                                                    <tr key={i} className="border-b border-white/5 hover:bg-white/3 transition-colors">
-                                                        <td className="py-2.5 pr-4 font-medium text-white/90">{row.framework}</td>
-                                                        <td className="py-2.5 pr-4 text-white/40">{row.authority}</td>
-                                                        <td className="py-2.5 pr-4">
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="flex-1 h-1.5 bg-white/10 rounded-full max-w-[80px]">
+                                                    <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                                                        <td className="py-3 px-4 font-bold text-white font-mono text-xs">{row.framework}</td>
+                                                        <td className="py-3 px-4 text-white/50 text-[10px] font-mono tracking-wider">{row.authority}</td>
+                                                        <td className="py-3 px-4">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="flex-1 h-1 bg-white/10 max-w-[100px] overflow-hidden">
                                                                     <div
-                                                                        className={`h-full rounded-full ${row.baseScore > 80 ? 'bg-emerald-500' : row.baseScore > 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                                                                        className={`h-full ${row.baseScore > 80 ? 'bg-[#00E5A0]' : row.baseScore > 60 ? 'bg-amber-400' : 'bg-[#FF3131]'}`}
                                                                         style={{ width: `${row.baseScore}%` }}
                                                                     />
                                                                 </div>
-                                                                <span className={`text-xs font-bold ${row.baseScore > 80 ? 'text-emerald-400' : row.baseScore > 60 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                                                <span className={`text-[10px] font-bold font-mono ${row.baseScore > 80 ? 'text-[#00E5A0]' : row.baseScore > 60 ? 'text-amber-400' : 'text-[#FF3131]'}`}>
                                                                     {row.baseScore}%
                                                                 </span>
                                                             </div>
                                                         </td>
-                                                        <td className="py-2.5">
+                                                        <td className="py-3 px-4">
                                                             {row.gaps.length === 0 ? (
-                                                                <span className="text-xs text-emerald-400/70">✓ No gaps detected</span>
+                                                                <span className="text-[10px] tracking-widest uppercase font-mono text-[#00E5A0] bg-[#00E5A0]/10 px-2 py-1 border border-[#00E5A0]/20">✓ SECURE</span>
                                                             ) : (
-                                                                <div className="flex flex-wrap gap-1">
+                                                                <div className="flex flex-wrap gap-1.5">
                                                                     {[...new Set(row.gaps)].slice(0, 3).map((gap, gi) => (
-                                                                        <span key={gi} className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded">{gap}</span>
+                                                                        <span key={gi} className="text-[9px] font-mono tracking-widest uppercase bg-[#FF3131]/10 text-[#FF3131] border border-[#FF3131]/20 px-1.5 py-0.5">{gap}</span>
                                                                     ))}
                                                                 </div>
                                                             )}
@@ -3057,21 +3260,22 @@ function ArchitectContent() {
                                 {/* Attack Timeline */}
                                 {attackTimeline.length > 0 && (
                                     <div className="mb-8">
-                                        <h3 className="text-sm font-semibold uppercase text-white/50 tracking-wider mb-6 border-b border-white/10 pb-3 flex items-center">
+                                        <h3 className="text-[10px] font-bold uppercase text-white/50 tracking-widest font-mono mb-6 flex items-center">
                                             <Activity className="h-4 w-4 mr-2" /> Simulated Attack Timeline
+                                            <div className="h-px bg-white/10 flex-1 ml-4" />
                                         </h3>
                                         <div className="relative pl-6 ml-2">
-                                            <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-red-500 via-orange-500/50 to-transparent opacity-30" />
-                                            <div className="space-y-6">
+                                            <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-[#FF3131] via-amber-500/50 to-transparent opacity-30" />
+                                            <div className="space-y-4">
                                                 {attackTimeline.map((event, i) => (
-                                                    <div key={i} className={`relative pl-8 transition-all group`} style={{ animationDelay: `${i * 0.1}s` }}>
-                                                        <div className="absolute left-[-5px] top-1.5 w-2.5 h-2.5 rounded-full bg-black border-2 border-red-500 group-hover:bg-red-500 group-hover:shadow-[0_0_10px_rgba(239,68,68,0.8)] transition-all z-10" />
-                                                        <div className="flex flex-col md:flex-row md:items-center gap-4 bg-gradient-to-r from-white/[0.03] to-transparent border border-white/5 rounded-xl p-4 hover:border-red-500/30 transition-colors relative overflow-hidden">
-                                                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-red-500/50 to-orange-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                                            <span className="text-[10px] font-mono text-red-500/50 whitespace-nowrap font-bold bg-red-500/10 px-2 py-1 rounded border border-red-500/20 self-start">[{event.time}]</span>
+                                                    <div key={i} className={`relative pl-6 transition-all group`} style={{ animationDelay: `${i * 0.1}s` }}>
+                                                        <div className="absolute left-[-4px] top-2.5 w-2 h-2 bg-black border border-[#FF3131] group-hover:bg-[#FF3131] group-hover:shadow-[0_0_10px_rgba(255,49,49,0.8)] transition-all z-10" />
+                                                        <div className="flex flex-col md:flex-row md:items-center gap-4 bg-[#101014] border border-white/5 p-4 hover:border-[#FF3131]/30 transition-colors relative overflow-hidden group-hover:bg-[#FF3131]/5">
+                                                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-[#FF3131]/50 to-amber-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                            <span className="text-[10px] font-mono text-[#FF3131] whitespace-nowrap font-bold bg-[#FF3131]/10 px-2 py-1 border border-[#FF3131]/20 self-start tracking-widest">[{event.time}]</span>
                                                             <div>
-                                                                <div className={`text-[15px] font-bold ${event.color} mb-1 tracking-tight`}>{event.label}</div>
-                                                                <div className="text-sm text-white/60 leading-relaxed">{event.desc}</div>
+                                                                <div className={`text-xs tracking-widest uppercase font-mono font-bold ${event.color === 'text-red-400' ? 'text-[#FF3131]' : event.color === 'text-emerald-400' ? 'text-[#00E5A0]' : 'text-amber-400'} mb-1`}>{event.label}</div>
+                                                                <div className="text-[11px] text-white/60 leading-relaxed font-mono">{event.desc}</div>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -3082,39 +3286,40 @@ function ArchitectContent() {
                                 )}
 
                                 {/* Detailed Findings Table */}
-                                <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 border-b border-white/10 pb-2 flex items-center">
+                                <h3 className="text-[10px] font-bold uppercase text-[#00E5A0] tracking-widest mb-4 flex items-center font-mono">
                                     <Activity className="h-4 w-4 mr-2" /> Threat Vectors & Violations
+                                    <div className="h-px bg-[#00E5A0]/20 flex-1 ml-4" />
                                 </h3>
 
-                                {simulationResults.findings.length === 0 ? (
-                                    <div className="text-center py-12 bg-white/5 rounded-xl border border-white/10 border-dashed">
-                                        <Shield className="h-12 w-12 text-cyan-500/50 mx-auto mb-4" />
-                                        <p className="text-white font-medium">Zero Critical Exposures Detected</p>
-                                        <p className="text-sm text-white/50">Your architecture aligns with core compliance frameworks.</p>
+                                {simulationResults?.findings.length === 0 ? (
+                                    <div className="text-center py-12 bg-[#101014] border border-[#00E5A0]/20 border-dashed">
+                                        <Shield className="h-12 w-12 text-[#00E5A0]/50 mx-auto mb-4" />
+                                        <p className="text-[#00E5A0] font-bold font-mono text-[10px] uppercase tracking-widest mb-2">Zero Critical Exposures Detected</p>
+                                        <p className="text-[10px] text-[#00E5A0]/50 font-mono">Your architecture aligns with core compliance frameworks.</p>
                                     </div>
                                 ) : (
                                     <div className="space-y-3">
-                                        {simulationResults.findings.map((finding: any, idx: number) => (
-                                            <div key={idx} className={`bg-black/40 border border-white/5 rounded-xl p-5 flex flex-col gap-4 relative overflow-hidden group hover:bg-black/60 transition-colors ${finding.severity === 'Critical' ? 'border-l-4 border-l-red-500' :
+                                        {simulationResults?.findings.map((finding: any, idx: number) => (
+                                            <div key={idx} className={`bg-[#101014] border border-white/10 p-5 flex flex-col gap-4 relative overflow-hidden group hover:bg-[#1a1a24] transition-colors ${finding.severity === 'Critical' ? 'border-l-4 border-l-[#FF3131]' :
                                                 finding.severity === 'High' ? 'border-l-4 border-l-orange-500' :
-                                                    'border-l-4 border-l-yellow-500'
+                                                    'border-l-4 border-l-amber-400'
                                                 }`}>
                                                 <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none transition-opacity group-hover:opacity-10">
                                                     <ShieldAlert className="w-16 h-16" />
                                                 </div>
                                                 <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 relative z-10">
                                                     <div className="flex items-start space-x-3">
-                                                        <div className={`mt-1.5 h-2 w-2 rounded-full flex-shrink-0 ${finding.severity === 'Critical' ? 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]' : finding.severity === 'High' ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)]' : 'bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.8)]'}`}></div>
+                                                        <div className={`mt-1.5 h-2.5 w-2.5 flex-shrink-0 border ${finding.severity === 'Critical' ? 'bg-[#FF3131]/20 border-[#FF3131] shadow-[0_0_10px_rgba(255,49,49,0.5)] animate-pulse' : finding.severity === 'High' ? 'bg-orange-500/20 border-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.5)]' : 'bg-amber-400/20 border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.5)]'}`}></div>
                                                         <div>
-                                                            <p className="text-white/90 text-sm font-medium leading-relaxed">{finding.description}</p>
+                                                            <p className="text-white/90 text-sm font-medium leading-relaxed font-mono">{finding.description}</p>
                                                             <div className="flex flex-wrap gap-2 mt-3">
                                                                 {(finding.complianceMappings || []).map((mapping: string, mapIdx: number) => (
-                                                                    <span key={mapIdx} className="text-[9px] uppercase font-bold text-white/50 bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                                                                    <span key={mapIdx} className="text-[9px] uppercase font-bold text-[#00E5A0] bg-[#00E5A0]/10 px-2 py-0.5 border border-[#00E5A0]/20 tracking-widest font-mono">
                                                                         {mapping}
                                                                     </span>
                                                                 ))}
                                                                 {finding.mitreId && (
-                                                                    <span className="text-[9px] uppercase font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 flex items-center shadow-[0_0_10px_rgba(168,85,247,0.1)]">
+                                                                    <span className="text-[9px] uppercase font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 border border-indigo-500/20 flex items-center shadow-[0_0_10px_rgba(99,102,241,0.1)] tracking-widest font-mono">
                                                                         <Shield className="h-2.5 w-2.5 mr-1" />
                                                                         {finding.mitreId}: {finding.mitreTactic} → {finding.mitreTechnique}
                                                                     </span>
@@ -3123,7 +3328,7 @@ function ArchitectContent() {
                                                         </div>
                                                     </div>
                                                     <div className="flex-shrink-0">
-                                                        <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded flex items-center gap-1.5 ${finding.severity === 'Critical' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : finding.severity === 'High' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20'}`}>
+                                                        <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 flex items-center gap-1.5 font-mono ${finding.severity === 'Critical' ? 'bg-[#FF3131]/10 text-[#FF3131] border border-[#FF3131]/30' : finding.severity === 'High' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/30' : 'bg-amber-400/10 text-amber-400 border border-amber-400/30'}`}>
                                                             {finding.severity === 'Critical' && <Activity className="w-3 h-3 animate-pulse" />}
                                                             {finding.severity}
                                                         </span>
@@ -3132,16 +3337,16 @@ function ArchitectContent() {
 
                                                 {/* Auto-Remediation Code Block */}
                                                 {finding.remediationCode && (
-                                                    <div className="mt-2 text-left bg-[#0d1117] border border-white/5 rounded-lg overflow-hidden group">
-                                                        <div className="flex items-center justify-between px-3 py-1.5 bg-white/5 border-b border-white/5">
-                                                            <span className="text-[10px] text-emerald-400 font-mono flex items-center tracking-widest uppercase font-bold">
-                                                                <Activity className="h-3 w-3 mr-1.5 animate-pulse" />
+                                                    <div className="mt-2 text-left bg-black border border-white/10 group">
+                                                        <div className="flex items-center justify-between px-4 py-2 bg-white/5 border-b border-white/10">
+                                                            <span className="text-[10px] text-[#00E5A0] font-mono flex items-center tracking-widest uppercase font-bold">
+                                                                <Activity className="h-3 w-3 mr-2 animate-pulse" />
                                                                 Auto-Remediation (Terraform)
                                                             </span>
-                                                            <span className="text-[10px] text-white/30 hidden group-hover:block uppercase tracking-wider">Infrastructure As Code</span>
+                                                            <span className="text-[9px] text-[#00E5A0]/40 font-mono tracking-widest uppercase hidden group-hover:block blur-none">IaC Generator Active</span>
                                                         </div>
-                                                        <div className="p-3 overflow-x-auto custom-scrollbar">
-                                                            <pre className="text-xs font-mono text-gray-300 whitespace-pre">
+                                                        <div className="p-4 overflow-x-auto custom-scrollbar">
+                                                            <pre className="text-[11px] font-mono text-white/70 whitespace-pre">
                                                                 <code>{finding.remediationCode}</code>
                                                             </pre>
                                                         </div>
@@ -3163,58 +3368,61 @@ function ArchitectContent() {
             {/* AWS Deployment Results Overlay */}
             {
                 deploymentResults && (
-                    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 md:p-8 animate-in fade-in zoom-in-95 duration-300">
-                        <div className="bg-[#111] border border-orange-500/30 rounded-2xl w-full max-w-4xl max-h-full flex flex-col shadow-[0_0_100px_rgba(249,115,22,0.15)] relative overflow-hidden">
+                    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 md:p-8 animate-in fade-in duration-300">
+                        <div className="bg-[#101014] border border-[#00E5A0]/30 w-full max-w-4xl max-h-full flex flex-col shadow-[0_0_50px_rgba(0,229,160,0.1)] relative overflow-hidden">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-[#00E5A0]/10 to-transparent pointer-events-none" />
 
                             {/* Header */}
-                            <div className="p-6 border-b border-white/10 bg-gradient-to-r from-orange-500/10 to-transparent flex items-center justify-between sticky top-0 z-10">
+                            <div className="p-6 border-b border-white/10 bg-[#15151b] flex items-center justify-between sticky top-0 z-10">
                                 <div className="flex items-center space-x-4">
-                                    <div className="p-3 rounded-xl bg-orange-500/20 border border-orange-500/30">
-                                        <Cloud className="h-6 w-6 text-orange-400" />
+                                    <div className="p-3 bg-black border border-[#00E5A0]/30 relative overflow-hidden group">
+                                        <div className="absolute inset-0 bg-[#00E5A0]/5 group-hover:bg-[#00E5A0]/10 transition-colors" />
+                                        <Cloud className="h-6 w-6 text-[#00E5A0] relative z-10" />
                                     </div>
                                     <div>
-                                        <h2 className="text-xl font-bold text-white tracking-tight">AWS Infrastructure Provisioned</h2>
-                                        <p className="text-sm text-orange-200/50">Infrastructure-as-Code execution completed successfully.</p>
+                                        <h2 className="text-lg font-bold text-white tracking-widest font-mono uppercase">AWS Infrastructure Provisioned</h2>
+                                        <p className="text-[10px] tracking-widest font-mono text-[#00E5A0]/50 uppercase mt-1">Infrastructure-as-Code execution completed successfully</p>
                                     </div>
                                 </div>
                                 <button
                                     onClick={() => setDeploymentResults(null)}
-                                    className="p-2 hover:bg-white/10 text-white/50 hover:text-white rounded-lg transition-colors border border-transparent hover:border-white/20"
+                                    className="h-8 w-8 flex items-center justify-center bg-black border border-white/10 text-white/50 hover:text-white hover:border-white/30 transition-colors font-mono"
                                 >
                                     ✕
                                 </button>
                             </div>
 
                             {/* Resources Table */}
-                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                                <div className="space-y-4">
-                                    {deploymentResults.resources.map((res, idx) => (
-                                        <div key={idx} className="bg-black/50 border border-white/5 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white/[0.02] transition-colors">
-                                            <div className="flex items-start space-x-4">
+                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-black/40">
+                                <div className="space-y-3">
+                                    {deploymentResults?.resources.map((res, idx) => (
+                                        <div key={idx} className="bg-black border border-white/10 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-[#00E5A0]/30 transition-colors group relative overflow-hidden">
+                                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#00E5A0]/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            <div className="flex items-start space-x-4 relative z-10 pl-2">
                                                 <div className="mt-1">
-                                                    {res.awsService === 'EC2' ? <Server className="h-5 w-5 text-blue-400" /> :
-                                                        res.awsService === 'RDS' ? <Database className="h-5 w-5 text-purple-400" /> :
-                                                            <Globe className="h-5 w-5 text-gray-400" />}
+                                                    {res.awsService === 'EC2' ? <Server className="h-4 w-4 text-[#00E5A0]" /> :
+                                                        res.awsService === 'RDS' ? <Database className="h-4 w-4 text-[#00E5A0]" /> :
+                                                            <Globe className="h-4 w-4 text-[#00E5A0]" />}
                                                 </div>
                                                 <div>
                                                     <div className="flex items-center space-x-2">
-                                                        <span className="text-white font-medium">{res.awsService} Resources</span>
-                                                        <span className="text-xs text-white/40 bg-white/10 px-2 py-0.5 rounded font-mono">{res.resourceId}</span>
+                                                        <span className="text-white font-bold font-mono text-xs uppercase tracking-widest">{res.awsService} Resources</span>
+                                                        <span className="text-[9px] text-white/40 bg-white/5 px-1.5 py-0.5 border border-white/10 font-mono tracking-widest">{res.resourceId}</span>
                                                     </div>
-                                                    <p className="text-sm text-white/60 mt-1">{res.details}</p>
+                                                    <p className="text-[11px] text-white/60 mt-1.5 font-mono">{res.details}</p>
                                                 </div>
                                             </div>
-                                            <div className="flex items-center space-x-2 self-start md:self-auto bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full">
-                                                <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-                                                <span className="text-xs uppercase font-bold text-emerald-400 tracking-wider">
+                                            <div className="flex items-center space-x-2 self-start md:self-auto bg-[#00E5A0]/10 border border-[#00E5A0]/20 px-3 py-1.5 relative z-10">
+                                                <CheckCircle2 className="h-3 w-3 text-[#00E5A0]" />
+                                                <span className="text-[10px] uppercase font-bold text-[#00E5A0] tracking-widest font-mono">
                                                     {res.status}
                                                 </span>
                                             </div>
                                         </div>
                                     ))}
 
-                                    {(deploymentResults.resources || []).length === 0 && (
-                                        <div className="text-center py-12 text-white/50">
+                                    {(deploymentResults?.resources || []).length === 0 && (
+                                        <div className="text-center py-12 text-[#00E5A0]/50 font-mono text-xs uppercase tracking-widest border border-dashed border-[#00E5A0]/20 m-4">
                                             No AWS resources were provisioned. Ensure your architecture has compute or database nodes.
                                         </div>
                                     )}
@@ -3224,21 +3432,21 @@ function ArchitectContent() {
                     </div>
                 )
             }
-        </div >
+        </div>
     );
 }
 
 export default function ArchitectPage() {
     return (
         <Suspense fallback={
-            <div className="flex h-[calc(100vh-3.5rem)] w-full items-center justify-center bg-[#060606]">
+            <div className="flex h-[calc(100vh-3.5rem)] w-full items-center justify-center bg-[#101014]">
                 <div className="flex flex-col items-center gap-4">
                     <div className="relative">
-                        <div className="h-12 w-12 rounded-full border border-white/10 flex items-center justify-center">
-                            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-ping" />
+                        <div className="h-12 w-12 border border-[#00E5A0]/20 flex items-center justify-center bg-black">
+                            <div className="h-1.5 w-1.5 bg-[#00E5A0] animate-ping" />
                         </div>
                     </div>
-                    <p className="text-white/30 text-xs font-mono tracking-widest uppercase">Loading workspace...</p>
+                    <p className="text-[#00E5A0] text-[10px] font-mono tracking-widest uppercase">Initializing terminal...</p>
                 </div>
             </div>
         }>

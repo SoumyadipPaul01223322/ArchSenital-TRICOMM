@@ -112,4 +112,45 @@ export default defineSchema({
     viewport: v.object({ x: v.number(), y: v.number(), zoom: v.number() }),
     updatedAt: v.number(),
   }).index("by_ownerId", ["ownerId"]),
+
+  // Entity Settings
+  orgSettings: defineTable({
+    orgId: v.string(),
+    auditLogging: v.boolean(),
+    ipAllowlisting: v.boolean(),
+    apiKeyRotationDays: v.number(),
+    alertCriticalFindings: v.boolean(),
+    alertWeeklyDigest: v.boolean(),
+    alertScanCompletion: v.boolean(),
+  }).index("by_orgId", ["orgId"]),
+
+  // API Keys / CI/CD Access Tokens
+  apiKeys: defineTable({
+    orgId: v.string(),
+    name: v.string(),
+    key: v.string(),
+    role: v.optional(v.union(
+      v.literal("admin"),
+      v.literal("developer"),
+      v.literal("readonly"),
+      v.literal("ci_runner")
+    )),
+    createdAt: v.number(),
+    lastUsed: v.optional(v.number()),
+  }).index("by_orgId", ["orgId"]),
+
+  // Simulation History / Attack Logs
+  simulationRuns: defineTable({
+    orgId: v.string(),
+    architectureName: v.string(),
+    initialRiskScore: v.number(),
+    finalRiskScore: v.number(),
+    findingCount: v.number(),
+    remediationsApplied: v.number(),
+    status: v.union(v.literal("Completed"), v.literal("Failed"), v.literal("Interrupted")),
+    runDurationMs: v.number(),
+    createdAt: v.number(),
+  }).index("by_orgId", ["orgId"]),
 });
+
+

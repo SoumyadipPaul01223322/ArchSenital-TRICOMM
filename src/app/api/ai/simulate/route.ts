@@ -12,29 +12,30 @@ export async function POST(req: Request) {
 
         const architectureContext = JSON.stringify({ nodes, edges }, null, 2);
 
-        const systemPrompt = `You are a world-class Red Team Security Engineer and Threat Modeler.
-Your goal is to analyze the provided JSON architecture and dynamically simulate a realistic cyber attack kill chain.
+        const systemPrompt = `You are a world-class Enterprise Cloud Security Architect, Red Team Lead, and CISO Advisor.
+Your goal is to deeply analyze the provided JSON architecture and dynamically simulate a highly realistic, technically rigorous cyber attack kill chain.
 
 Follow this strict JSON schema for your output. Do not include any markdown formatting, only pure JSON:
 {
   "killChain": [
     {
-      "step": "Reconnaissance | Access | Execution | Privilege Escalation | Exfiltration",
-      "detail": "Actionable, specific detail about how the attacker exploited a specific node in this architecture.",
+      "step": "Reconnaissance | Initial Access | Execution | Privilege Escalation | Defense Evasion | Lateral Movement | Exfiltration",
+      "detail": "Provide a deeply technical, multi-sentence explanation of the exact exploit used, the specific service targeted, and the methodology (e.g., 'Attacker utilized an unauthenticated Server-Side Request Forgery (SSRF) vulnerability on the API Gateway to bypass perimeter controls...'). Do not skimp on technical detail.",
       "result": "SUCCESS" | "DETECTED" | "BLOCKED"
-    }
+    },
+    // Generate at least 5-7 highly detailed steps
   ],
   "report": {
     "totalRiskScore": <number 0-100>,
     "compromisedNodes": [<array of node IDs that were breached>],
-    "financialCost": "<string e.g. '₹2.5 Crores'>",
-    "estimatedDowntime": "<string e.g. '12 hours'>",
-    "findingSummary": "<A realistic 3-sentence executive summary of the architectural flaws>",
+    "financialCost": "<string e.g. '₹12.5 Crores ($1.5M USD)'>",
+    "estimatedDowntime": "<string e.g. '48-72 hours impact'>",
+    "findingSummary": "<An extremely comprehensive, professional, 8-12 sentence executive security brief suitable for a Board of Directors. It must explicitly detail the core structural vulnerabilities, the hypothetical breach timeline, the potential impact on data sovereignty and compliance, and the overarching security posture analysis. Use highly professional enterprise terminology.>",
     "remediationGaps": [
       {
          "severity": "Critical" | "High" | "Medium",
-         "description": "<Specific missing control e.g. Missing WAF, No MFA>",
-         "complianceMappings": ["SOC2", "ISO27001"],
+         "description": "<A huge, deeply detailed paragraph explaining exactly what the vulnerability is, the exploit mechanics, the specific compliance violations (e.g., SOC2 CC6.1, ISO27001 A.11), and the precise technical justification for the recommended patch. Be incredibly verbose and educational.>",
+         "complianceMappings": ["SOC2", "ISO27001", "HIPAA", "PCI-DSS", "GDPR"],
          "recommendedPatches": [
             {
                "nodeId": "<exact string ID of the vulnerable node from the JSON, e.g. 'node-123'>",
@@ -52,30 +53,15 @@ Analyze the architecture comprehensively:
 - If the attack is successfully blocked, 'totalRiskScore' MUST be very low (e.g. 5-20), 'compromisedNodes' MUST be empty [], 'financialCost' MUST be "₹0", and 'estimatedDowntime' MUST be "0 hours" or "None".
 - The 'compromisedNodes' array MUST strictly contain the literal string IDs of the nodes that were breached (as provided in the 'id' field in the JSON).
 - The 'recommendedPatches' array MUST contain exact node IDs and the appropriate boolean security controls to toggle 'true' to fix the vulnerability. Do not recommend patching nodes that are already secured.
-- Ensure the 'result' in each kill chain step accurately reflects whether a component stopped the attack (BLOCKED), noticed it (DETECTED), or failed to stop it (SUCCESS).`;
+- Ensure the 'result' in each kill chain step accurately reflects whether a component stopped the attack (BLOCKED), noticed it (DETECTED), or failed to stop it (SUCCESS).
+- Produce output with MAXIMUM detail, extensive enterprise-level security vocabulary, and comprehensive technical analysis.`;
 
         let llmResponse = "";
-        let attemptPlatform = "gemini";
+        let attemptPlatform = "perplexity";
 
         try {
-            // Attempt 1: Gemini API
-            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: `${systemPrompt}\n\nARCHITECTURE JSON:\n${architectureContext}`,
-                config: {
-                    temperature: 0.2,
-                    responseMimeType: "application/json"
-                }
-            });
-            llmResponse = response.text || "";
-        } catch (geminiError) {
-            console.warn("Gemini API failed. Falling back to Perplexity...", geminiError);
-            attemptPlatform = "perplexity";
-
-            // Attempt 2: Perplexity Fallback
             if (!process.env.PERPLEXITY_API_KEY) {
-                throw new Error("Both Gemini failed and PERPLEXITY_API_KEY is missing in environment.");
+                throw new Error("PERPLEXITY_API_KEY is missing in environment.");
             }
 
             const perpRes = await fetch("https://api.perplexity.ai/chat/completions", {
@@ -88,9 +74,9 @@ Analyze the architecture comprehensively:
                     model: "sonar-pro",
                     messages: [
                         { role: "system", content: systemPrompt },
-                        { role: "user", content: `Simulate an attack on this architecture and return ONLY valid JSON as requested.\n\nARCHITECTURE JSON:\n${architectureContext}` }
+                        { role: "user", content: `Please execute the highly detailed security simulation. Output ONLY valid JSON, adhering EXACTLY to my requested schema.\n\nARCHITECTURE JSON:\n${architectureContext}` }
                     ],
-                    temperature: 0.2
+                    temperature: 0.3
                 })
             });
 
@@ -104,6 +90,9 @@ Analyze the architecture comprehensively:
 
             // Clean up Markdown backticks if Perplexity returns them
             llmResponse = llmResponse.replace(/(^```json\s*|^```\s*|```$)/gm, '').trim();
+        } catch (apiError) {
+            console.error("Perplexity simulation failed:", apiError);
+            throw apiError;
         }
 
         // Parse JSON output

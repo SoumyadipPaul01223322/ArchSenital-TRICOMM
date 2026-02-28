@@ -1,6 +1,11 @@
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import DashboardClient from "./DashboardClient";
+import { Metadata } from "next";
+
+export const metadata: Metadata = {
+    title: "Dashboard",
+};
 
 export default async function DashboardIndex() {
     const { userId, orgId } = await auth();
