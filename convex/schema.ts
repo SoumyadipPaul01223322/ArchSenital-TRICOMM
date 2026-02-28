@@ -42,7 +42,7 @@ export default defineSchema({
     nodes: v.array(
       v.object({
         id: v.string(),
-        type: v.string(),
+        type: v.optional(v.string()),
         position: v.object({ x: v.number(), y: v.number() }),
         data: v.any(), // Flexible component data configurations
         measured: v.optional(v.any()),

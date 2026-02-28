@@ -27,7 +27,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Shield, Database, Globe, Server, Activity, Zap, ShieldAlert, Cpu, MessageSquare, Key, BarChart3, Trash2, Bot, Sparkles, Cloud, CheckCircle2, FileCheck, Terminal } from "lucide-react";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Tooltip } from 'recharts';
-
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 // Canvas starts empty — populated from Convex DB on load
 const initialNodes: Node[] = [];
 const initialEdges: Edge[] = [];
@@ -431,6 +432,7 @@ function ArchitectContent() {
     const [replayingNodes, setReplayingNodes] = useState<string[]>([]);
     const [componentSearch, setComponentSearch] = useState('');
 
+    const [isSyncingAws, setIsSyncingAws] = useState(false);
     const [isSyncingDns, setIsSyncingDns] = useState(false);
     const [deploymentResults, setDeploymentResults] = useState<{
         success: boolean;
@@ -483,36 +485,99 @@ function ArchitectContent() {
             return;
         }
         setIsSimulating(true);
+
+        // Pre-configure the animation UI
+        attackTimerRefs.current.forEach(t => clearTimeout(t));
+        attackTimerRefs.current = [];
+        setRunningScenario({ id: 'ai', label: 'AI Threat Engine', color: '#f43f5e', glow: 'rgba(244,63,94,0.7)', bg: '#1a0a0a', killChain: [] } as any);
+        setScenarioStep(0);
+        setScenarioComplete(false);
+        setScenarioLog([]);
+        setAttackedNodes([]);
+        setShowAttackPanel(true);
+
         try {
-            const diagramId = await saveArch({
+            await saveArch({
                 projectId: projectId as any,
                 orgId,
                 nodes,
                 edges
             });
 
-            const results = await simulateAttack({ diagramId: diagramId as any });
-            setSimulationResults(results);
+            // Call the intelligent AI Threat Modeler (Gemini -> Perplexity fallback)
+            const res = await fetch('/api/ai/simulate', {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ diagram: { nodes, edges } })
+            });
+            const data = await res.json();
 
-            // Generate AI Summary in the background
-            setIsGeneratingAi(true);
-            try {
-                const summary = await generateAiSummary({
-                    projectId: projectId as any,
-                    findings: results.findings,
-                    impactScore: results.impactScore
-                });
-                setAiSummary(summary ?? generateFallbackSummary(results.impactScore, results.findings));
-            } catch (aiErr) {
-                console.error("AI Generation failed:", aiErr);
-                setAiSummary(generateFallbackSummary(results.impactScore, results.findings));
-            } finally {
-                setIsGeneratingAi(false);
+            if (!res.ok || !data.success || !data.simulation) {
+                throw new Error(data.error || "AI Threat Engine returned invalid data.");
             }
+
+            const sim = data.simulation;
+            const killChain = sim.killChain || [];
+            const report = sim.report || {};
+
+            // Synchronize the real report
+            setSimulationResults({
+                impactScore: report.totalRiskScore || 0,
+                compromisedNodes: report.compromisedNodes || [],
+                findings: (report.remediationGaps || []).map((gap: any, i: number) => ({
+                    componentId: `finding-${i}`,
+                    description: gap.description,
+                    severity: gap.severity,
+                    complianceMappings: gap.complianceMappings || [],
+                    recommendedPatches: gap.recommendedPatches || []
+                }))
+            });
+
+            // Set the AI reasoning directly to avoid separate LLM calls
+            setAiSummary(
+                `EXECUTIVE SECURITY BRIEF — AI THREAT INTEL\n\n` +
+                `${report.findingSummary || 'Attack paths evaluated.'}\n\n` +
+                `Estimated Financial Impact: ${report.financialCost || 'Unknown'}\n` +
+                `Estimated Service Downtime: ${report.estimatedDowntime || 'Unknown'}\n`
+            );
+
+            // Stream the dynamic AI Kill Chain phases
+            killChain.forEach((phase: any, phaseIdx: number) => {
+                const t = setTimeout(() => {
+                    setScenarioStep(phaseIdx);
+                    setScenarioLog(prev => [...prev, {
+                        step: phase.step,
+                        detail: phase.detail + (phase.result ? ` [Outcome: ${phase.result}]` : '')
+                    }]);
+
+                    // Highlight all nodes marked as compromised by the AI
+                    if (report.compromisedNodes && report.compromisedNodes.length > 0) {
+                        setAttackedNodes(report.compromisedNodes);
+                        setNodes(nds => nds.map(n => report.compromisedNodes.includes(n.id) ? {
+                            ...n,
+                            style: {
+                                ...n.style,
+                                border: `2px solid #ef4444`,
+                                boxShadow: `0 0 30px rgba(239,68,68,0.7), 0 0 60px rgba(239,68,68,0.2)`,
+                                background: '#1a0505',
+                                transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)'
+                            }
+                        } : n));
+                    }
+                }, phaseIdx * 2500); // 2.5s delay per AI step for dramatic streaming effect
+                attackTimerRefs.current.push(t);
+            });
+
+            // Mark completion
+            const finalTimer = setTimeout(() => {
+                setScenarioComplete(true);
+            }, killChain.length * 2500 + 1000);
+            attackTimerRefs.current.push(finalTimer);
 
         } catch (err: any) {
             console.error(err);
-            setSimulationError(`Simulation failed: ${err?.message ?? 'Unknown error. Check console for details.'}`);
+            setSimulationError(`AI Target Simulation failed: ${err?.message ?? 'Unknown error.'}`);
+            setRunningScenario(null);
         } finally {
             setIsSimulating(false);
         }
@@ -544,6 +609,157 @@ function ArchitectContent() {
             setIsDeploying(false);
         }
     };
+
+    const handleAutoFix = useCallback(async () => {
+        if (!simulationResults || !simulationResults.findings) return;
+
+        // Build a precise patch map per node based on the AI's dynamic recommendations
+        const nodePatchesTargeted: Record<string, Record<string, boolean>> = {};
+
+        simulationResults.findings.forEach((finding: any) => {
+            if (finding.recommendedPatches && Array.isArray(finding.recommendedPatches)) {
+                finding.recommendedPatches.forEach((rp: any) => {
+                    if (rp.nodeId && rp.patch) {
+                        nodePatchesTargeted[rp.nodeId] = {
+                            ...(nodePatchesTargeted[rp.nodeId] || {}),
+                            ...rp.patch
+                        };
+                    }
+                });
+            }
+        });
+
+        const affectedNodeIds = Object.keys(nodePatchesTargeted);
+
+        if (affectedNodeIds.length === 0) {
+            alert("Zin AI found no specific node patches to apply in this simulation run.");
+            return;
+        }
+
+        // Apply patches to the exact vulnerable nodes designated by the AI intelligence
+        setNodes(nds => nds.map(n => {
+            if (nodePatchesTargeted[n.id]) {
+                const patchToApply = nodePatchesTargeted[n.id];
+                return {
+                    ...n,
+                    data: {
+                        ...n.data,
+                        ...patchToApply
+                    },
+                    style: {
+                        ...n.style,
+                        border: '2px solid #10b981', // Emerald green success border
+                        boxShadow: '0 0 20px rgba(16,185,129,0.5)',
+                        transition: 'all 0.5s ease-out'
+                    }
+                };
+            }
+            return n;
+        }));
+
+        // Let the animation play, then clear the simulation to force the user to re-run it
+        setTimeout(() => {
+            // GENERATE PDF REPORT
+            try {
+                const doc = new jsPDF();
+
+                // Header
+                doc.setFillColor(6, 182, 212); // Cyan
+                doc.rect(0, 0, 210, 20, 'F');
+                doc.setTextColor(255, 255, 255);
+                doc.setFontSize(16);
+                doc.setFont("helvetica", "bold");
+                doc.text("Zin AI Executive Cyber-Risk Analyst Report", 15, 14);
+
+                // Meta Info
+                doc.setTextColor(50, 50, 50);
+                doc.setFontSize(10);
+                doc.setFont("helvetica", "normal");
+                doc.text(`Generated: ${new Date().toLocaleString()}`, 15, 30);
+                doc.text(`Project ID: ${projectId || 'Local'}`, 15, 36);
+
+                // Summary Section
+                doc.setFontSize(14);
+                doc.setFont("helvetica", "bold");
+                doc.text("1. Executive Summary", 15, 50);
+                doc.setFontSize(10);
+                doc.setFont("helvetica", "normal");
+                const splitSummary = doc.splitTextToSize((aiSummary || '').replace(/EXECUTIVE SECURITY BRIEF — AI THREAT INTEL\n\n/, ''), 180);
+                doc.text(splitSummary, 15, 58);
+
+                let currentY = 58 + (splitSummary.length * 5) + 10;
+
+                // Action Taken
+                doc.setFontSize(14);
+                doc.setFont("helvetica", "bold");
+                doc.text("2. Auto-Remediation Actions Taken", 15, currentY);
+                currentY += 8;
+                doc.setFontSize(10);
+                doc.setFont("helvetica", "normal");
+                doc.text("Zin AI identified and secured the following specific architectural components:", 15, currentY);
+                currentY += 8;
+
+                const patchList: string[] = [];
+                Object.keys(nodePatchesTargeted).forEach(nodeId => {
+                    const exactNode = nodes.find(n => n.id === nodeId);
+                    const label = exactNode ? (exactNode.data as any).label || (exactNode.data as any).componentType : nodeId;
+                    const appliedParams = Object.keys(nodePatchesTargeted[nodeId]).join(', ');
+                    patchList.push(`• Secured [${label}]: Enforced ${appliedParams}`);
+                });
+
+                patchList.forEach(patch => {
+                    const splitPatch = doc.splitTextToSize(patch, 180);
+                    doc.text(splitPatch, 20, currentY);
+                    currentY += (splitPatch.length * 5);
+                });
+
+                currentY += 5;
+
+                // Detailed Findings Table
+                doc.setFontSize(14);
+                doc.setFont("helvetica", "bold");
+                doc.text("3. Detailed Vulnerability Findings", 15, currentY);
+                currentY += 8;
+
+                const tableBody = simulationResults.findings.map((f: any) => [
+                    f.severity,
+                    f.description,
+                    f.complianceMappings?.length ? f.complianceMappings.join(', ') : 'None'
+                ]);
+
+                autoTable(doc, {
+                    startY: currentY,
+                    head: [['Severity', 'Vulnerability Description', 'Compliance Impact']],
+                    body: tableBody,
+                    theme: 'grid',
+                    headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255] },
+                    styles: { fontSize: 9, cellPadding: 3 },
+                    columnStyles: {
+                        0: { cellWidth: 25, fontStyle: 'bold' },
+                        1: { cellWidth: 90 },
+                        2: { cellWidth: 'auto' }
+                    }
+                });
+
+                // Footer
+                doc.setFontSize(8);
+                doc.setTextColor(150, 150, 150);
+                doc.text("Confidential - Generated by ArchSentinel Zin AI Threat Engine", 15, 290);
+
+                doc.save("Zin_AI_Security_Remediation_Report.pdf");
+
+            } catch (pdfErr) {
+                console.error("Failed to generate PDF:", pdfErr);
+            }
+
+            // Reset UI state
+            setSimulationResults(null);
+            setAiSummary('');
+            setAttackedNodes([]);
+            alert("Zin AI Auto-Fix Applied successfully! ✨\n\nSecurity controls have been intelligently enabled on the exactly vulnerable nodes based on AI intel. A detailed PDF Analyst Report is downloading. Click 'Simulate Threat' again to verify your new Risk Score.");
+        }, 1200);
+
+    }, [simulationResults, attackedNodes, setNodes, projectId, aiSummary, nodes]);
 
     const runAttackScenario = useCallback((scenario: AttackScenario) => {
         // Clear previous scenario & timers
@@ -907,7 +1123,7 @@ function ArchitectContent() {
 
     if (simulationResults) {
         simulationResults.findings.forEach((f: any) => {
-            f.complianceMappings.forEach((mapping: string) => {
+            (f.complianceMappings || []).forEach((mapping: string) => {
                 if (mapping.includes('SOC2')) { complianceTableData[0].baseScore -= 8; complianceTableData[0].gaps.push(f.mitreTechnique ?? 'Policy Gap'); }
                 if (mapping.includes('ISO')) { complianceTableData[1].baseScore -= 10; complianceTableData[1].gaps.push(f.mitreTechnique ?? 'Policy Gap'); }
                 if (mapping.includes('OWASP')) { complianceTableData[2].baseScore -= 15; complianceTableData[2].gaps.push(f.mitreTechnique ?? 'Policy Gap'); }
@@ -1022,7 +1238,10 @@ function ArchitectContent() {
                 cdn: { bg: '#05161a', border: '#22d3ee', glow: 'rgba(34,211,238,0.3)' }, // cyan
                 siem: { bg: '#100a1a', border: '#a855f7', glow: 'rgba(168,85,247,0.3)' }, // purple
                 attacker: { bg: '#1a0a0a', border: '#f43f5e', glow: 'rgba(244,63,94,0.4)' }, // rose
-                internet: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' }, // Keep internet for backward compatibility with live dns sync
+                internet: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                database: { bg: '#0a0a1a', border: '#818cf8', glow: 'rgba(129,140,248,0.4)' }, // indigo
+                api: { bg: '#05121a', border: '#38bdf8', glow: 'rgba(56,189,248,0.4)' }, // sky
+                iam: { bg: '#0f051a', border: '#c084fc', glow: 'rgba(192,132,252,0.4)' }, // purple
             };
             const colors = nodeColorMap[type] || { bg: '#111', border: '#444', glow: 'rgba(255,255,255,0.1)' };
             const nodeId = `${type}-${Date.now()}`;
@@ -1108,10 +1327,49 @@ function ArchitectContent() {
                     alert('Invalid ArchSentinel JSON — missing nodes or edges array.');
                     return;
                 }
-                setNodes(json.nodes);
+                const parsedNodes = json.nodes.map((n: any) => {
+                    const nodeColorMap: Record<string, { bg: string, border: string, glow: string }> = {
+                        server: { bg: '#05101a', border: '#0ea5e9', glow: 'rgba(14,165,233,0.3)' },
+                        vps: { bg: '#0a0d1a', border: '#6366f1', glow: 'rgba(99,102,241,0.4)' },
+                        node: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                        router: { bg: '#1a0d05', border: '#f97316', glow: 'rgba(249,115,22,0.3)' },
+                        switch: { bg: '#051a0d', border: '#10b981', glow: 'rgba(16,185,129,0.3)' },
+                        firewall: { bg: '#1a0505', border: '#ef4444', glow: 'rgba(239,68,68,0.4)' },
+                        cdn: { bg: '#05161a', border: '#22d3ee', glow: 'rgba(34,211,238,0.3)' },
+                        siem: { bg: '#100a1a', border: '#a855f7', glow: 'rgba(168,85,247,0.3)' },
+                        attacker: { bg: '#1a0a0a', border: '#f43f5e', glow: 'rgba(244,63,94,0.4)' },
+                        internet: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                        database: { bg: '#0a0a1a', border: '#818cf8', glow: 'rgba(129,140,248,0.4)' },
+                        api: { bg: '#05121a', border: '#38bdf8', glow: 'rgba(56,189,248,0.4)' },
+                        iam: { bg: '#0f051a', border: '#c084fc', glow: 'rgba(192,132,252,0.4)' },
+                    };
+                    const type = n.data?.componentType || 'node';
+                    const colors = nodeColorMap[type] || { bg: '#111', border: '#444', glow: 'rgba(255,255,255,0.1)' };
+
+                    return {
+                        ...n,
+                        type: 'default', // Force default type so rendering works natively
+                        style: {
+                            background: colors.bg,
+                            color: "#fff",
+                            border: `1.5px solid ${colors.border}`,
+                            borderRadius: "10px",
+                            width: 160,
+                            padding: 10,
+                            boxShadow: `0 0 20px ${colors.glow}, 0 4px 16px rgba(0,0,0,0.5)`,
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
+                            ...n.style // Allow overrides from JSON if present
+                        }
+                    };
+                });
+
+                setNodes(parsedNodes);
                 setEdges(json.edges);
                 setSelectedNode(null);
-            } catch {
+            } catch (err) {
+                console.error(err);
                 alert('Failed to parse JSON file. Please use a valid ArchSentinel export.');
             }
         };
@@ -1119,6 +1377,62 @@ function ArchitectContent() {
         // Reset so same file can be re-imported
         e.target.value = '';
     }, [setNodes, setEdges]);
+
+    const handleAwsDiscovery = async () => {
+        setIsSyncingAws(true);
+        try {
+            const res = await fetch('/api/aws/discovery');
+            const data = await res.json();
+            if (res.ok && data.success && data.diagram) {
+                const parsedNodes = data.diagram.nodes.map((n: any) => {
+                    const nodeColorMap: Record<string, { bg: string, border: string, glow: string }> = {
+                        server: { bg: '#05101a', border: '#0ea5e9', glow: 'rgba(14,165,233,0.3)' },
+                        vps: { bg: '#0a0d1a', border: '#6366f1', glow: 'rgba(99,102,241,0.4)' },
+                        node: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                        router: { bg: '#1a0d05', border: '#f97316', glow: 'rgba(249,115,22,0.3)' },
+                        switch: { bg: '#051a0d', border: '#10b981', glow: 'rgba(16,185,129,0.3)' },
+                        firewall: { bg: '#1a0505', border: '#ef4444', glow: 'rgba(239,68,68,0.4)' },
+                        cdn: { bg: '#05161a', border: '#22d3ee', glow: 'rgba(34,211,238,0.3)' },
+                        siem: { bg: '#100a1a', border: '#a855f7', glow: 'rgba(168,85,247,0.3)' },
+                        attacker: { bg: '#1a0a0a', border: '#f43f5e', glow: 'rgba(244,63,94,0.4)' },
+                        internet: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                        database: { bg: '#0a0a1a', border: '#818cf8', glow: 'rgba(129,140,248,0.4)' },
+                        api: { bg: '#05121a', border: '#38bdf8', glow: 'rgba(56,189,248,0.4)' },
+                        iam: { bg: '#0f051a', border: '#c084fc', glow: 'rgba(192,132,252,0.4)' },
+                    };
+                    const type = n.data?.componentType || 'node';
+                    const colors = nodeColorMap[type] || { bg: '#111', border: '#444', glow: 'rgba(255,255,255,0.1)' };
+
+                    return {
+                        ...n,
+                        type: 'default',
+                        style: {
+                            background: colors.bg,
+                            color: "#fff",
+                            border: `1.5px solid ${colors.border}`,
+                            borderRadius: "10px",
+                            width: 160,
+                            padding: 10,
+                            boxShadow: `0 0 20px ${colors.glow}, 0 4px 16px rgba(0,0,0,0.5)`,
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
+                            ...n.style
+                        }
+                    };
+                });
+
+                setNodes(parsedNodes);
+                setEdges(data.diagram.edges);
+            } else {
+                alert(`AWS Discovery Failed: ${data.error || 'Unknown error'}`);
+            }
+        } catch (e: any) {
+            alert(`Error mapping AWS environment: ${e.message}`);
+        } finally {
+            setIsSyncingAws(false);
+        }
+    };
 
     return (
         <div className="flex h-[calc(100vh-8rem)] w-full border border-white/10 rounded-xl overflow-hidden shadow-2xl">
@@ -1134,6 +1448,15 @@ function ArchitectContent() {
                             <p className="text-[10px] text-white/30 mt-0.5">Drag components onto the canvas</p>
                         </div>
                         <div className="flex items-center gap-2">
+                            {/* AWS Connect */}
+                            <button
+                                onClick={handleAwsDiscovery}
+                                disabled={isSyncingAws}
+                                title="Discover live infrastructure from AWS via SDK"
+                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 hover:border-orange-500/50 text-orange-400 disabled:opacity-30 text-[9px] font-bold uppercase tracking-wider transition-all duration-200"
+                            >
+                                <Cloud className={`h-3 w-3 ${isSyncingAws ? 'animate-pulse' : ''}`} /> {isSyncingAws ? 'Mapping...' : 'Map AWS'}
+                            </button>
                             {/* Import */}
                             <button
                                 onClick={() => importInputRef.current?.click()}
@@ -1407,7 +1730,7 @@ function ArchitectContent() {
                                         <div
                                             className="h-full rounded-full transition-all duration-700"
                                             style={{
-                                                width: `${((scenarioStep + 1) / runningScenario.killChain.length) * 100}%`,
+                                                width: `${runningScenario.killChain.length > 0 ? ((scenarioStep + 1) / runningScenario.killChain.length) * 100 : 0}%`,
                                                 backgroundColor: runningScenario.color,
                                                 boxShadow: `0 0 10px ${runningScenario.glow}`
                                             }}
@@ -1568,8 +1891,16 @@ function ArchitectContent() {
                                     const ct = selectedNode?.data?.componentType as string;
                                     const d = selectedNode?.data as any;
 
+                                    // Display name configuration (Shared across all node types)
+                                    const EntityPanel = () => (
+                                        <Sec icon={FileCheck} title="Component Identity">
+                                            <TxtInput field="label" label="Display Name" placeholder="e.g. Primary DB" />
+                                        </Sec>
+                                    );
+
                                     // ── SERVER & VPS ───────────────────────────────
                                     if (ct === 'server' || ct === 'vps') return <div className="space-y-4">
+                                        <EntityPanel />
                                         <Sec icon={Server} title="Operating System">
                                             <Sel field="osFamily" label="OS Platform" options={['Debian/Ubuntu Linux', 'RHEL/CentOS Linux', 'Windows Server 2022', 'Windows Server 2019', 'FreeBSD']} defaultVal="Debian/Ubuntu Linux" />
                                             <TxtInput field="osVersion" label="Version / Kernel" placeholder="e.g. Ubuntu 22.04 LTS" />
@@ -1598,6 +1929,7 @@ function ArchitectContent() {
 
                                     // ── DATABASE CLUSTER ─────────────────────────
                                     if (ct === 'database') return <div className="space-y-4">
+                                        <EntityPanel />
                                         <Sec icon={Database} title="Database Configuration">
                                             <Sel field="dbService" label="Database Engine" options={['PostgreSQL', 'MySQL/MariaDB', 'MongoDB', 'Redis', 'MS SQL Server', 'Oracle DB']} defaultVal="PostgreSQL" />
                                             <Sel field="exposure" label="Network Exposure" options={['Internal Only (VPC)', 'Public Facing']} defaultVal="Internal Only (VPC)" />
@@ -1615,6 +1947,7 @@ function ArchitectContent() {
 
                                     // ── API / MICROSERVICE ───────────────────────
                                     if (ct === 'api') return <div className="space-y-4">
+                                        <EntityPanel />
                                         <Sec icon={Globe} title="API Configuration">
                                             <Sel field="exposure" label="Network Exposure" options={['Internal Service', 'Public Facing']} defaultVal="Public Facing" />
                                             <Toggle field="encryptionInTransit" label="Enforce TLS 1.2+" defaultVal={true} />
@@ -1630,8 +1963,23 @@ function ArchitectContent() {
                                         <SensSlider />
                                     </div>;
 
+                                    // ── FIREWALL / WAF / IDS ──────────────────────────
+                                    if (ct === 'firewall' || ct === 'waf') return <div className="space-y-4">
+                                        <EntityPanel />
+                                        <Sec icon={ShieldAlert} title="Access Policies">
+                                            <Sel field="defaultPolicy" label="Default Policy" options={['Default Deny (Secure)', 'Default Allow (Insecure)']} defaultVal="Default Deny (Secure)" />
+                                            <TxtInput field="allowedPorts" label="Allowed Ingress Ports" placeholder="80, 443, 22" />
+                                        </Sec>
+                                        <Sec icon={Activity} title="Intrusion Detection">
+                                            <Toggle field="enableIDS" label="Enable IDS/IPS Engine" defaultVal={true} />
+                                            <Sel field="idsMode" label="IDS Operating Mode" options={['Prevention (Drop)', 'Detection Only (Alert)']} defaultVal="Prevention (Drop)" />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
                                     // ── IAM / IdP ────────────────────────────────
                                     if (ct === 'iam') return <div className="space-y-4">
+                                        <EntityPanel />
                                         <Sec icon={Key} title="Identity Provider">
                                             <Sel field="iamService" label="Directory Service" options={['Active Directory', 'Okta / Auth0', 'AWS IAM / Cognito', 'Custom LDAP']} defaultVal="Okta / Auth0" />
                                             <Toggle field="mfaRequired" label="Enforce MFA Globally" defaultVal={true} />
@@ -1642,9 +1990,26 @@ function ArchitectContent() {
                                         </Sec>
                                         <SensSlider />
                                     </div>;
+                                    // ── CDN / EDGE NODE ──────────────────────────────
+                                    if (ct === 'cdn') return <div className="space-y-4">
+                                        <EntityPanel />
+                                        <Sec icon={Globe} title="Edge Network">
+                                            <Sel field="cdnProvider" label="CDN Vendor" options={['Cloudflare', 'AWS CloudFront', 'Akamai', 'Fastly']} defaultVal="Cloudflare" />
+                                            <TxtInput field="ipAddress" label="Anycast IP" placeholder="104.16.x.x" />
+                                            <Toggle field="cachingEnabled" label="Static Asset Caching" defaultVal={true} />
+                                        </Sec>
+                                        <Sec icon={ShieldAlert} title="Perimeter Security">
+                                            <Toggle field="ddosProtection" label="DDoS Flow Mitigation" defaultVal={true} />
+                                            <Toggle field="wafEnabled" label="Web Application Firewall" defaultVal={true} />
+                                            <Sel field="wafMode" label="WAF Operation" options={['Blocking', 'Challenge/Captcha', 'Log Only']} defaultVal="Blocking" />
+                                            <Toggle field="botManagement" label="Advanced Bot Management" defaultVal={false} />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
 
                                     // ── ROUTER / SWITCH ──────────────────────────────
                                     if (ct === 'router' || ct === 'switch') return <div className="space-y-4">
+                                        <EntityPanel />
                                         <Sec icon={Activity} title="Device Config">
                                             <Sel field="deviceVendor" label="Vendor OS" options={['Cisco IOS', 'Juniper Junos', 'MikroTik RouterOS', 'Arista EOS', 'Generic L3']} defaultVal="Cisco IOS" />
                                             <TxtInput field="managementIp" label="Management IP (VLAN 1)" placeholder="192.168.1.254" />
@@ -1662,6 +2027,7 @@ function ArchitectContent() {
 
                                     // ── ENDPOINT / LAPTOP ────────────────────────────
                                     if (ct === 'node') return <div className="space-y-4">
+                                        <EntityPanel />
                                         <Sec icon={Database} title="Workstation OS">
                                             <Sel field="osFamily" label="OS Platform" options={['Windows 11 Corporate', 'Windows 10', 'macOS Sonoma', 'Ubuntu Desktop']} defaultVal="Windows 11 Corporate" />
                                         </Sec>
@@ -1680,6 +2046,7 @@ function ArchitectContent() {
 
                                     // ── SIEM SERVER ──────────────────────────────────
                                     if (ct === 'siem') return <div className="space-y-4">
+                                        <EntityPanel />
                                         <Sec icon={BarChart3} title="SIEM Platform">
                                             <Sel field="siemVendor" label="SIEM Engine" options={['Wazuh', 'IBM QRadar', 'Splunk Enterprise', 'Elastic Security', 'AlienVault OSSIM']} defaultVal="Wazuh" />
                                         </Sec>
@@ -1973,6 +2340,7 @@ function ArchitectContent() {
                                             </div>
 
                                             {/* Attacker OS & Tools */}
+                                            <EntityPanel />
                                             <Sec icon={Terminal} title="Attacker Profile">
                                                 <Sel field="attackerOs" label="Offensive OS" options={['Kali Linux', 'Parrot OS', 'Commando VM', 'Custom Botnet C2']} defaultVal="Kali Linux" />
                                                 <Sel field="networkContext" label="Position" options={['External (Internet)', 'Internal (Compromised VDI)', 'DMZ Hijack']} defaultVal="External (Internet)" />
@@ -2269,8 +2637,22 @@ function ArchitectContent() {
                                                 <span className="text-sm">Zin AI is analyzing the threat graph and generating an executive brief...</span>
                                             </div>
                                         ) : (
-                                            <div className="prose prose-invert max-w-none text-white/80 text-sm leading-relaxed whitespace-pre-wrap">
-                                                {aiSummary}
+                                            <div className="space-y-4">
+                                                <div className="prose prose-invert max-w-none text-white/80 text-sm leading-relaxed whitespace-pre-wrap">
+                                                    {aiSummary}
+                                                </div>
+                                                {simulationResults && simulationResults.findings && simulationResults.findings.length > 0 && (
+                                                    <div className="pt-4 border-t border-white/10 flex items-center justify-between">
+                                                        <div className="text-xs text-white/40">Zin AI can automatically apply recommended security controls to your nodes.</div>
+                                                        <button
+                                                            onClick={handleAutoFix}
+                                                            className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white text-xs font-bold uppercase tracking-widest rounded-lg flex items-center shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all hover:scale-105"
+                                                        >
+                                                            <Sparkles className="h-4 w-4 mr-2 mb-0.5" />
+                                                            Auto-Remediate Architecture
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -2310,11 +2692,11 @@ function ArchitectContent() {
                                             <div className="bg-gradient-to-r from-white/5 to-transparent border border-white/10 rounded-xl p-5 col-span-2 flex items-center justify-between group hover:bg-white/10 transition-colors cursor-default">
                                                 <div>
                                                     <div className="text-xs text-white/40 uppercase tracking-wider mb-1 font-bold">Compliance Violations</div>
-                                                    <div className={`text-2xl font-light ${simulationResults.findings.filter((f: any) => f.complianceMappings.length > 0).length > 0 ? 'text-yellow-500' : 'text-emerald-500'}`}>
-                                                        {simulationResults.findings.filter((f: any) => f.complianceMappings.length > 0).length} Policy Gaps Detected
+                                                    <div className={`text-2xl font-light ${simulationResults.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length > 0 ? 'text-yellow-500' : 'text-emerald-500'}`}>
+                                                        {simulationResults.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length} Policy Gaps Detected
                                                     </div>
                                                 </div>
-                                                <FileCheck className={`h-10 w-10 ${simulationResults.findings.filter((f: any) => f.complianceMappings.length > 0).length > 0 ? 'text-yellow-500/40 group-hover:text-yellow-500/60' : 'text-emerald-500/40 group-hover:text-emerald-500/60'} transition-colors`} />
+                                                <FileCheck className={`h-10 w-10 ${simulationResults.findings.filter((f: any) => (f.complianceMappings || []).length > 0).length > 0 ? 'text-yellow-500/40 group-hover:text-yellow-500/60' : 'text-emerald-500/40 group-hover:text-emerald-500/60'} transition-colors`} />
                                             </div>
                                         </div>
                                     </div>
@@ -2446,7 +2828,7 @@ function ArchitectContent() {
                                                         <div>
                                                             <p className="text-white/90 text-sm font-medium leading-relaxed">{finding.description}</p>
                                                             <div className="flex flex-wrap gap-2 mt-3">
-                                                                {finding.complianceMappings.map((mapping: string, mapIdx: number) => (
+                                                                {(finding.complianceMappings || []).map((mapping: string, mapIdx: number) => (
                                                                     <span key={mapIdx} className="text-[9px] uppercase font-bold text-white/50 bg-white/5 px-2 py-0.5 rounded border border-white/10">
                                                                         {mapping}
                                                                     </span>
@@ -2551,7 +2933,7 @@ function ArchitectContent() {
                                         </div>
                                     ))}
 
-                                    {deploymentResults.resources.length === 0 && (
+                                    {(deploymentResults.resources || []).length === 0 && (
                                         <div className="text-center py-12 text-white/50">
                                             No AWS resources were provisioned. Ensure your architecture has compute or database nodes.
                                         </div>
