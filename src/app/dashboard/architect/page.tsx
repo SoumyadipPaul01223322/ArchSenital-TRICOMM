@@ -1733,33 +1733,130 @@ function ArchitectContent() {
                                                 log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP from ${ip}:21. PII CSV, ${dbSvc ? dbSvc + ' records, ' : ''}47,000+ rows sent to attacker C2. No alerts. Fully undetected.` });
                                             }
 
-                                            // Batch node animation — single setNodes call
-                                            const isBlocked = log.some(l => l.result === 'BLOCKED' || l.result === 'DETECTED');
-                                            setNodes(nds => nds.map(n => {
-                                                const nd = n.data as any;
-                                                if (nd?.componentType === 'attacker') return n;
-                                                return { ...n, style: { ...n.style, border: '2px solid #ef4444', boxShadow: '0 0 25px rgba(239,68,68,0.6)', transition: 'all 0.5s ease' } };
-                                            }));
-                                            setTimeout(() => {
-                                                setNodes(nds => nds.map(n => {
-                                                    const nd = n.data as any;
-                                                    if (nd?.componentType === 'attacker') return n;
-                                                    return { ...n, style: { ...n.style, border: isBlocked ? '2px solid #10b981' : '2px solid #ef4444', boxShadow: isBlocked ? '0 0 20px rgba(16,185,129,0.5)' : '0 0 20px rgba(239,68,68,0.5)', transition: 'all 0.5s ease' } };
-                                                }));
-                                            }, 3000);
+                                            // Stream results phase-by-phase with colour-coded node animations
+                                            log.forEach((entry, i) => {
+                                                setTimeout(() => {
+                                                    // Reveal this phase's log entry
+                                                    setAttackLog(prev => [...prev, entry]);
 
-                                            setAttackLog(log);
-                                            setAttackRunning(false);
+                                                    // Determine animation colour for this result
+                                                    const color =
+                                                        entry.result === 'BLOCKED'
+                                                            ? { border: '#10b981', glow: 'rgba(16,185,129,0.8)', label: 'shield' }
+                                                            : entry.result === 'DETECTED'
+                                                                ? { border: '#f59e0b', glow: 'rgba(245,158,11,0.8)', label: 'warn' }
+                                                                : { border: '#ef4444', glow: 'rgba(239,68,68,0.9)', label: 'hit' };
+
+                                                    // Flash all non-attacker nodes with phase colour
+                                                    setNodes(nds => nds.map(n => {
+                                                        const nd = n.data as any;
+                                                        if (nd?.componentType === 'attacker') return n;
+                                                        return {
+                                                            ...n,
+                                                            style: {
+                                                                ...n.style,
+                                                                border: `2px solid ${color.border}`,
+                                                                boxShadow: `0 0 32px ${color.glow}, 0 0 8px ${color.glow}`,
+                                                                transition: 'all 0.25s ease',
+                                                                filter: `brightness(1.2)`
+                                                            }
+                                                        };
+                                                    }));
+
+                                                    // After flash, dim back to neutral (unless last phase)
+                                                    if (i < log.length - 1) {
+                                                        setTimeout(() => {
+                                                            setNodes(nds => nds.map(n => {
+                                                                if ((n.data as any)?.componentType === 'attacker') return n;
+                                                                return {
+                                                                    ...n,
+                                                                    style: {
+                                                                        ...n.style,
+                                                                        border: '1px solid rgba(255,255,255,0.1)',
+                                                                        boxShadow: '0 0 6px rgba(255,255,255,0.05)',
+                                                                        filter: 'brightness(1)',
+                                                                        transition: 'all 0.5s ease'
+                                                                    }
+                                                                };
+                                                            }));
+                                                        }, 600);
+                                                    }
+
+                                                    // On last phase: finalize running state + settle final colour
+                                                    if (i === log.length - 1) {
+                                                        setAttackRunning(false);
+                                                        // Stop attacker node pulsing
+                                                        setNodes(nds => nds.map(n => {
+                                                            if ((n.data as any)?.componentType !== 'attacker') return n;
+                                                            return { ...n, style: { ...n.style, boxShadow: '0 0 20px rgba(239,68,68,0.4)', border: '2px solid #ef4444', filter: 'brightness(1)', transition: 'all 0.5s ease' } };
+                                                        }));
+                                                        // Settle all other nodes to final verdict colour
+                                                        const allSecured = log.every(l => l.result !== 'SUCCESS');
+                                                        const anySuccess = log.some(l => l.result === 'SUCCESS');
+                                                        const finalColor = allSecured
+                                                            ? { border: '#10b981', glow: 'rgba(16,185,129,0.4)' }
+                                                            : anySuccess
+                                                                ? { border: '#ef4444', glow: 'rgba(239,68,68,0.4)' }
+                                                                : { border: '#f59e0b', glow: 'rgba(245,158,11,0.4)' };
+                                                        setTimeout(() => {
+                                                            setNodes(nds => nds.map(n => {
+                                                                if ((n.data as any)?.componentType === 'attacker') return n;
+                                                                return {
+                                                                    ...n,
+                                                                    style: {
+                                                                        ...n.style,
+                                                                        border: `2px solid ${finalColor.border}`,
+                                                                        boxShadow: `0 0 18px ${finalColor.glow}`,
+                                                                        filter: 'brightness(1)',
+                                                                        transition: 'all 0.6s ease'
+                                                                    }
+                                                                };
+                                                            }));
+                                                        }, 800);
+                                                    }
+                                                }, i * 950);
+                                            });
                                         };
 
                                         const launchAttack = () => {
                                             if (!targetNode || attackRunning) return;
                                             setAttackLog([]);
                                             setAttackRunning(true);
-                                            setTimeout(runEvaluate, 1000);
+                                            // Animate attacker node pulsing red while running
+                                            setNodes(nds => nds.map(n => {
+                                                if ((n.data as any)?.componentType !== 'attacker') return n;
+                                                return {
+                                                    ...n,
+                                                    style: {
+                                                        ...n.style,
+                                                        border: '2px solid #ef4444',
+                                                        boxShadow: '0 0 40px rgba(239,68,68,0.9), 0 0 80px rgba(239,68,68,0.4)',
+                                                        filter: 'brightness(1.3)',
+                                                        transition: 'all 0.3s ease'
+                                                    }
+                                                };
+                                            }));
+                                            // Brief "charging" pause then evaluate
+                                            setTimeout(runEvaluate, 800);
                                         };
 
                                         return <div className="space-y-4 text-white">
+                                            {/* CSS keyframes for attack animations */}
+                                            <style>{`
+                                                @keyframes killchain-slide-in {
+                                                    from { opacity: 0; transform: translateY(8px) scale(0.97); }
+                                                    to   { opacity: 1; transform: translateY(0)   scale(1); }
+                                                }
+                                                @keyframes badge-pop {
+                                                    0%   { opacity: 0; transform: scale(0.6); }
+                                                    70%  { transform: scale(1.15); }
+                                                    100% { opacity: 1; transform: scale(1); }
+                                                }
+                                                @keyframes attacker-pulse {
+                                                    0%, 100% { box-shadow: 0 0 20px rgba(239,68,68,0.5), 0 0 40px rgba(239,68,68,0.2); }
+                                                    50%       { box-shadow: 0 0 50px rgba(239,68,68,0.9), 0 0 100px rgba(239,68,68,0.5); }
+                                                }
+                                            `}</style>
                                             {/* Header */}
                                             <div className="flex items-center gap-3 p-3 rounded-xl bg-rose-950/30 border border-rose-500/20">
                                                 <div className="p-2 rounded-lg bg-rose-500/10">
@@ -1879,12 +1976,24 @@ function ArchitectContent() {
                                                     </div>
                                                     <div className="divide-y divide-white/5 bg-black/40">
                                                         {attackLog.map((entry, i) => (
-                                                            <div key={i} className="px-3 py-2.5 flex gap-3 items-start">
+                                                            <div
+                                                                key={i}
+                                                                className="px-3 py-2.5 flex gap-3 items-start"
+                                                                style={{
+                                                                    animation: 'killchain-slide-in 0.35s cubic-bezier(0.16,1,0.3,1) both',
+                                                                    animationDelay: '0ms'
+                                                                }}
+                                                            >
                                                                 <div className="flex-shrink-0 mt-0.5">
-                                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${entry.result === 'SUCCESS' ? 'bg-rose-500/20 text-rose-400' :
-                                                                        entry.result === 'BLOCKED' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                                            'bg-yellow-500/20 text-yellow-400'
-                                                                        }`}>{entry.result === 'SUCCESS' ? '✖ HIT' : entry.result === 'BLOCKED' ? '✔ BLOCKED' : '⚠ DETECT'}</span>
+                                                                    <span
+                                                                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${entry.result === 'SUCCESS' ? 'bg-rose-500/20 text-rose-400 shadow-[0_0_8px_rgba(239,68,68,0.5)]' :
+                                                                            entry.result === 'BLOCKED' ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
+                                                                                'bg-yellow-500/20 text-yellow-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                                                                            }`}
+                                                                        style={{ animation: 'badge-pop 0.3s ease both', animationDelay: '0.15s' }}
+                                                                    >
+                                                                        {entry.result === 'SUCCESS' ? '✖ HIT' : entry.result === 'BLOCKED' ? '✔ BLOCKED' : '⚠ DETECT'}
+                                                                    </span>
                                                                 </div>
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="text-[10px] font-bold text-white/80 mb-1">{entry.phase}</div>
