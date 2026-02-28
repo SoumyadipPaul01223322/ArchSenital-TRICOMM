@@ -10,6 +10,7 @@
 
 import type * as aiExplanation from "../aiExplanation.js";
 import type * as architecture from "../architecture.js";
+import type * as architectures from "../architectures.js";
 import type * as awsDeployment from "../awsDeployment.js";
 import type * as riskEngine from "../riskEngine.js";
 import type * as setup from "../setup.js";
@@ -23,6 +24,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   aiExplanation: typeof aiExplanation;
   architecture: typeof architecture;
+  architectures: typeof architectures;
   awsDeployment: typeof awsDeployment;
   riskEngine: typeof riskEngine;
   setup: typeof setup;

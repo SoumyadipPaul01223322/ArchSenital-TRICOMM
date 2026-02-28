@@ -103,4 +103,13 @@ export default defineSchema({
   })
     .index("by_projectId", ["projectId"])
     .index("by_orgId", ["orgId"]),
+
+  architectures: defineTable({
+    name: v.string(),
+    ownerId: v.string(),
+    nodes: v.array(v.any()),
+    edges: v.array(v.any()),
+    viewport: v.object({ x: v.number(), y: v.number(), zoom: v.number() }),
+    updatedAt: v.number(),
+  }).index("by_ownerId", ["ownerId"]),
 });

@@ -25,7 +25,7 @@ import {
     ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Shield, Database, Globe, Server, Activity, Zap, ShieldAlert, Cpu, MessageSquare, Key, BarChart3, Trash2, Bot, Sparkles, Cloud, CheckCircle2, FileCheck, Terminal } from "lucide-react";
+import { Shield, Database, Globe, Server, Activity, Zap, ShieldAlert, Cpu, MessageSquare, Key, BarChart3, Trash2, Bot, Sparkles, Cloud, CheckCircle2, FileCheck, Terminal, Box, GitBranch } from "lucide-react";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Tooltip } from 'recharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -304,6 +304,15 @@ const COMPONENT_TREE = [
         ]
     },
     {
+        label: 'DevOps & Cloud Native',
+        children: [
+            { type: 'k8s', subtype: 'k8s_cluster', label: 'Kubernetes Cluster', icon: Box, color: 'text-indigo-400', bg: 'bg-indigo-500/8', border: 'border-indigo-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'EKS / GKE / AKS', os: 'Cloud Native' },
+            { type: 'serverless', subtype: 'lambda', label: 'Serverless Function', icon: Zap, color: 'text-orange-400', bg: 'bg-orange-500/8', border: 'border-orange-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'AWS Lambda / Cloud Run', os: 'Node.js / Python' },
+            { type: 'storage', subtype: 's3_bucket', label: 'Cloud Storage', icon: Database, color: 'text-emerald-400', bg: 'bg-emerald-500/8', border: 'border-emerald-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'S3 / GCS Bucket', os: 'Object Storage' },
+            { type: 'cicd', subtype: 'github_actions', label: 'CI/CD Pipeline', icon: GitBranch, color: 'text-pink-400', bg: 'bg-pink-500/8', border: 'border-pink-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'GitHub Actions / GitLab CI', os: 'Pipeline Runner' },
+        ]
+    },
+    {
         label: 'Threat Actors',
         children: [
             { type: 'attacker', subtype: 'kali', label: 'Kali Linux', icon: ShieldAlert, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Full pentesting distro · Metasploit', os: 'Kali Linux 2024.1' },
@@ -393,6 +402,8 @@ function ArchitectContent() {
     const simulateAttack = useMutation(api.riskEngine.simulateAttack);
     const generateAiSummary = useAction(api.aiExplanation.generateExecutiveSummary);
     const provisionInfra = useAction(api.awsDeployment.provisionInfrastructure);
+    const saveArchBlueprint = useMutation(api.architectures.saveArchitecture);
+    const savedArchitectures = useQuery(api.architectures.listArchitectures, { ownerId: orgId || "local" });
 
     const [nodes, setNodes] = useNodesState<Node>([]);
     const [edges, setEdges] = useEdgesState<Edge>(initialEdges);
@@ -607,6 +618,98 @@ function ArchitectContent() {
             alert("Failed to initiate AWS provisioning. Check console for details.");
         } finally {
             setIsDeploying(false);
+        }
+    };
+
+    const [isSaving, setIsSaving] = useState(false);
+    const [showLoadMenu, setShowLoadMenu] = useState(false);
+
+    const handleSaveBlueprint = async () => {
+        setIsSaving(true);
+        try {
+            await saveArchBlueprint({
+                name: `Architecture - ${new Date().toLocaleTimeString()}`,
+                ownerId: orgId || "local",
+                nodes,
+                edges,
+                viewport: { x: 0, y: 0, zoom: 1 }
+            });
+            setShowLoadMenu(false);
+        } catch (err) {
+            console.error(err);
+            alert("Failed to save blueprint");
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const [aiPrompt, setAiPrompt] = useState("");
+    const [isGeneratingArch, setIsGeneratingArch] = useState(false);
+
+    const handleGenerateArchitecture = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!aiPrompt.trim()) return;
+        setIsGeneratingArch(true);
+        try {
+            const res = await fetch('/api/ai/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: aiPrompt })
+            });
+            const data = await res.json();
+            if (res.ok && data.success && data.architecture) {
+                const parsedNodes = data.architecture.nodes.map((n: any) => {
+                    const nodeColorMap: Record<string, { bg: string, border: string, glow: string }> = {
+                        server: { bg: '#05101a', border: '#0ea5e9', glow: 'rgba(14,165,233,0.3)' },
+                        vps: { bg: '#0a0d1a', border: '#6366f1', glow: 'rgba(99,102,241,0.4)' },
+                        node: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                        router: { bg: '#1a0d05', border: '#f97316', glow: 'rgba(249,115,22,0.3)' },
+                        switch: { bg: '#051a0d', border: '#10b981', glow: 'rgba(16,185,129,0.3)' },
+                        firewall: { bg: '#1a0505', border: '#ef4444', glow: 'rgba(239,68,68,0.4)' },
+                        cdn: { bg: '#05161a', border: '#22d3ee', glow: 'rgba(34,211,238,0.3)' },
+                        siem: { bg: '#100a1a', border: '#a855f7', glow: 'rgba(168,85,247,0.3)' },
+                        attacker: { bg: '#1a0a0a', border: '#f43f5e', glow: 'rgba(244,63,94,0.4)' },
+                        internet: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' },
+                        database: { bg: '#0a0a1a', border: '#818cf8', glow: 'rgba(129,140,248,0.4)' },
+                        api: { bg: '#05121a', border: '#38bdf8', glow: 'rgba(56,189,248,0.4)' },
+                        iam: { bg: '#0f051a', border: '#c084fc', glow: 'rgba(192,132,252,0.4)' },
+                        k8s: { bg: '#0a0a1a', border: '#818cf8', glow: 'rgba(129,140,248,0.4)' },
+                        serverless: { bg: '#1a0a0a', border: '#fb923c', glow: 'rgba(251,146,60,0.4)' },
+                        storage: { bg: '#051a0d', border: '#34d399', glow: 'rgba(52,211,153,0.4)' },
+                        cicd: { bg: '#1a0510', border: '#f472b6', glow: 'rgba(244,114,182,0.4)' },
+                    };
+                    const type = n.data?.componentType || 'node';
+                    const colors = nodeColorMap[type] || { bg: '#111', border: '#444', glow: 'rgba(255,255,255,0.1)' };
+
+                    return {
+                        ...n,
+                        type: 'default',
+                        style: {
+                            background: colors.bg,
+                            color: "#fff",
+                            border: `1.5px solid ${colors.border}`,
+                            borderRadius: "10px",
+                            width: 160,
+                            padding: 10,
+                            boxShadow: `0 0 20px ${colors.glow}, 0 4px 16px rgba(0,0,0,0.5)`,
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
+                            ...n.style
+                        }
+                    };
+                });
+
+                setNodes(parsedNodes);
+                setEdges(data.architecture.edges || []);
+                setAiPrompt("");
+            } else {
+                alert(`AI Generation Failed: ${data.error || 'Unknown error'}`);
+            }
+        } catch (err: any) {
+            alert(`Error generating architecture: ${err.message}`);
+        } finally {
+            setIsGeneratingArch(false);
         }
     };
 
@@ -1457,6 +1560,44 @@ function ArchitectContent() {
                             >
                                 <Cloud className={`h-3 w-3 ${isSyncingAws ? 'animate-pulse' : ''}`} /> {isSyncingAws ? 'Mapping...' : 'Map AWS'}
                             </button>
+                            <div className="relative">
+                                <button
+                                    onClick={handleSaveBlueprint}
+                                    disabled={isSaving || nodes.length === 0}
+                                    title="Save Architecture to Convex Cloud"
+                                    className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[9px] font-bold uppercase transition-all"
+                                >
+                                    {isSaving ? 'SAVING...' : 'SAVE'}
+                                </button>
+                            </div>
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowLoadMenu(!showLoadMenu)}
+                                    className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 text-[9px] font-bold uppercase transition-all"
+                                >
+                                    LOAD
+                                </button>
+                                {showLoadMenu && (
+                                    <div className="absolute top-full mt-2 left-0 w-64 bg-gray-900 border border-white/10 rounded-lg shadow-xl z-50 p-2 text-white text-xs">
+                                        <div className="font-bold text-white/50 mb-2 uppercase text-[10px]">Saved Blueprints</div>
+                                        {savedArchitectures?.length === 0 && <div className="text-white/30 italic">No saves found.</div>}
+                                        {savedArchitectures?.map(arch => (
+                                            <div
+                                                key={arch._id}
+                                                onClick={() => {
+                                                    setNodes(arch.nodes);
+                                                    setEdges(arch.edges);
+                                                    setShowLoadMenu(false);
+                                                }}
+                                                className="p-2 hover:bg-white/10 rounded cursor-pointer truncate flex justify-between"
+                                            >
+                                                <span className="truncate mr-2 font-medium">{arch.name}</span>
+                                                <span className="text-white/30 flex-shrink-0 text-[10px]">{new Date(arch.updatedAt).toLocaleDateString()}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                             {/* Import */}
                             <button
                                 onClick={() => importInputRef.current?.click()}
@@ -1493,8 +1634,27 @@ function ArchitectContent() {
                         ))}
                     </div>
 
+                    {/* AI Generation Prompt */}
+                    <form onSubmit={handleGenerateArchitecture} className="mt-3 relative">
+                        <input
+                            type="text"
+                            value={aiPrompt}
+                            onChange={e => setAiPrompt(e.target.value)}
+                            disabled={isGeneratingArch}
+                            placeholder="Generate with AI..."
+                            className="w-full bg-indigo-900/10 border border-indigo-500/30 focus:border-indigo-400/60 rounded-xl pl-3 pr-8 py-2 text-xs text-indigo-100 placeholder-indigo-300/40 outline-none transition-colors"
+                        />
+                        <button
+                            type="submit"
+                            disabled={isGeneratingArch || !aiPrompt.trim()}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+                        >
+                            {isGeneratingArch ? <Cloud className="h-3.5 w-3.5 animate-bounce" /> : <Zap className="h-3.5 w-3.5" />}
+                        </button>
+                    </form>
+
                     {/* Search / filter */}
-                    <div className="relative mt-3">
+                    <div className="relative mt-2">
                         <input
                             type="text"
                             value={componentSearch}
@@ -1906,9 +2066,35 @@ function ArchitectContent() {
                                             <TxtInput field="osVersion" label="Version / Kernel" placeholder="e.g. Ubuntu 22.04 LTS" />
                                         </Sec>
                                         <Sec icon={Activity} title="Running Services">
-                                            <Sel field="webService" label="Web Server Daemon" options={['None', 'Apache HTTPD', 'Nginx', 'IIS 10', 'Tomcat', 'Node.js Express']} defaultVal="Nginx" />
-                                            <Sel field="dbService" label="Database Daemon" options={['None', 'MySQL/MariaDB', 'PostgreSQL', 'MS SQL Server', 'MongoDB']} defaultVal="None" />
-                                            <TxtInput field="customPorts" label="Listening Ports" placeholder="80, 443, 8080" />
+                                            {(d.subtype === 'web_server' || d.subtype === 'app_server' || d.subtype === 'vps_linux' || d.subtype === 'vps_windows' || !d.subtype) && (
+                                                <Sel field="webService" label="Web Server Daemon" options={['None', 'Apache HTTPD', 'Nginx', 'IIS 10', 'Tomcat', 'Node.js Express']} defaultVal={d.subtype === 'app_server' ? 'Node.js Express' : 'Nginx'} />
+                                            )}
+
+                                            {(d.subtype === 'db_server' || d.subtype === 'vps_linux' || d.subtype === 'vps_windows') && (
+                                                <Sel field="dbService" label="Database Daemon" options={['None', 'MySQL/MariaDB', 'PostgreSQL', 'MS SQL Server', 'MongoDB', 'Oracle DB']} defaultVal={d.subtype === 'db_server' ? 'MySQL/MariaDB' : 'None'} />
+                                            )}
+
+                                            {d.subtype === 'mail_server' && (
+                                                <>
+                                                    <Sel field="mailAgent" label="Mail Transfer Agent (MTA)" options={['Postfix', 'Exim', 'Microsoft Exchange', 'Sendmail']} defaultVal="Postfix" />
+                                                    <Sel field="mailDelivery" label="IMAP/POP3 Service" options={['Dovecot', 'Courier', 'Exchange', 'None']} defaultVal="Dovecot" />
+                                                    <Toggle field="antiSpam" label="Anti-Spam / Anti-Virus (SpamAssassin / ClamAV)" defaultVal={true} />
+                                                </>
+                                            )}
+
+                                            {d.subtype === 'file_server' && (
+                                                <>
+                                                    <Sel field="fileProtocol" label="File Sharing Protocol" options={['SMB / CIFS (Samba)', 'NFS', 'FTP / SFTP', 'WebDAV']} defaultVal="SMB / CIFS (Samba)" />
+                                                    <Toggle field="fileEncryption" label="Require Encrypted Connections" defaultVal={true} />
+                                                </>
+                                            )}
+
+                                            <TxtInput field="customPorts" label="Listening Ports" placeholder={
+                                                d.subtype === 'mail_server' ? '25, 143, 587, 993' :
+                                                    d.subtype === 'db_server' ? '3306, 5432' :
+                                                        d.subtype === 'file_server' ? '445, 2049, 21' :
+                                                            '80, 443, 8080'
+                                            } />
                                         </Sec>
                                         <Sec icon={Globe} title="Network Configuration (IPv4)">
                                             <TxtInput field="ipAddress" label="IPv4 Address" placeholder="192.168.1.10" />
@@ -1963,17 +2149,37 @@ function ArchitectContent() {
                                         <SensSlider />
                                     </div>;
 
-                                    // ── FIREWALL / WAF / IDS ──────────────────────────
+                                    // ── SECURITY APPLIANCES (FIREWALL / IDS / VPN) ──────────────────────────
                                     if (ct === 'firewall' || ct === 'waf') return <div className="space-y-4">
                                         <EntityPanel />
-                                        <Sec icon={ShieldAlert} title="Access Policies">
-                                            <Sel field="defaultPolicy" label="Default Policy" options={['Default Deny (Secure)', 'Default Allow (Insecure)']} defaultVal="Default Deny (Secure)" />
-                                            <TxtInput field="allowedPorts" label="Allowed Ingress Ports" placeholder="80, 443, 22" />
-                                        </Sec>
-                                        <Sec icon={Activity} title="Intrusion Detection">
-                                            <Toggle field="enableIDS" label="Enable IDS/IPS Engine" defaultVal={true} />
-                                            <Sel field="idsMode" label="IDS Operating Mode" options={['Prevention (Drop)', 'Detection Only (Alert)']} defaultVal="Prevention (Drop)" />
-                                        </Sec>
+
+                                        {(d.subtype === 'ngfw' || d.subtype === 'waf' || !d.subtype) && (
+                                            <Sec icon={ShieldAlert} title="Access & Layer 7 Policies">
+                                                <Sel field="defaultPolicy" label="Default Policy" options={['Default Deny (Secure)', 'Default Allow (Insecure)']} defaultVal="Default Deny (Secure)" />
+                                                <TxtInput field="allowedPorts" label="Allowed Ingress Ports" placeholder="80, 443, 22" />
+                                                {d.subtype === 'ngfw' && (
+                                                    <Toggle field="deepPacketInspection" label="Deep Packet Inspection (DPI/TLS Decryption)" defaultVal={false} />
+                                                )}
+                                            </Sec>
+                                        )}
+
+                                        {(d.subtype === 'ids_ips' || d.subtype === 'ngfw') && (
+                                            <Sec icon={Activity} title="IDS / IPS Engine">
+                                                <Toggle field="enableIDS" label="Intrusion Engine Active" defaultVal={true} />
+                                                <Sel field="idsMode" label="Operating Mode" options={['Prevention (Drop Traffic)', 'Detection Only (Alert SOC)']} defaultVal="Prevention (Drop Traffic)" />
+                                                <Sel field="signatureSet" label="Signature Set" options={['Balanced', 'Connectivity (Max Permissive)', 'Security (Strict)']} defaultVal="Balanced" />
+                                            </Sec>
+                                        )}
+
+                                        {d.subtype === 'vpn_gw' && (
+                                            <Sec icon={Key} title="VPN Gateway">
+                                                <Sel field="vpnProtocol" label="Tunnel Protocol" options={['IPSec (IKEv2)', 'WireGuard', 'OpenVPN', 'SSL/TLS VPN']} defaultVal="IPSec (IKEv2)" />
+                                                <Sel field="encryptionSuite" label="Encryption Cipher Suite" options={['AES-256-GCM', 'ChaCha20-Poly1305', 'AES-128-CBC', 'Blowfish (Weak)']} defaultVal="AES-256-GCM" />
+                                                <Toggle field="splitTunneling" label="Split Tunneling Enabled" defaultVal={false} />
+                                                <Toggle field="mfaRequired" label="Require MFA for VPN Logon" defaultVal={true} />
+                                            </Sec>
+                                        )}
+
                                         <SensSlider />
                                     </div>;
 
@@ -2007,6 +2213,65 @@ function ArchitectContent() {
                                         <SensSlider />
                                     </div>;
 
+                                    // ── KUBERNETES CLUSTER ─────────────────────────
+                                    if (ct === 'k8s') return <div className="space-y-4">
+                                        <EntityPanel />
+                                        <Sec icon={Box} title="Cluster Configuration">
+                                            <Sel field="k8sDistribution" label="Distribution" options={['EKS (AWS)', 'GKE (Google)', 'AKS (Azure)', 'OpenShift', 'Vanilla K8s']} defaultVal="EKS (AWS)" />
+                                            <TxtInput field="k8sVersion" label="Kubernetes Version" placeholder="1.29" />
+                                        </Sec>
+                                        <Sec icon={Shield} title="Security & Network">
+                                            <Toggle field="rbacEnabled" label="RBAC Enforced" defaultVal={true} />
+                                            <Toggle field="networkPolicies" label="Network Policies (Calico/Cilium)" defaultVal={false} />
+                                            <Sel field="serviceMesh" label="Service Mesh" options={['None', 'Istio', 'Linkerd']} defaultVal="None" />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── SERVERLESS FUNCTION ────────────────────────
+                                    if (ct === 'serverless') return <div className="space-y-4">
+                                        <EntityPanel />
+                                        <Sec icon={Zap} title="Runtime & Triggers">
+                                            <Sel field="runtime" label="Runtime Environment" options={['Node.js 20.x', 'Python 3.12', 'Go 1.x', 'Java 21']} defaultVal="Node.js 20.x" />
+                                            <Sel field="triggerType" label="Invocation Trigger" options={['API Gateway (HTTP)', 'EventBridge / Cron', 'S3 Object Created', 'SQS / SNS Queue']} defaultVal="API Gateway (HTTP)" />
+                                        </Sec>
+                                        <Sec icon={Key} title="Permissions & Environment">
+                                            <Toggle field="leastPrivilegeRoles" label="Least Privilege IAM Role" defaultVal={false} />
+                                            <Toggle field="envEncryption" label="Encrypted Env Variables (KMS)" defaultVal={true} />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── CLOUD STORAGE ──────────────────────────────
+                                    if (ct === 'storage') return <div className="space-y-4">
+                                        <EntityPanel />
+                                        <Sec icon={Database} title="Storage Bucket Config">
+                                            <Sel field="exposure" label="Access Level" options={['Private (VPC Only)', 'Public Read', 'Public Read/Write (Insecure!)']} defaultVal="Private (VPC Only)" />
+                                            <Toggle field="versioning" label="Object Versioning" defaultVal={true} />
+                                        </Sec>
+                                        <Sec icon={ShieldAlert} title="Data Protection">
+                                            <Toggle field="encryptionAtRest" label="Encryption at Rest" defaultVal={true} />
+                                            <Toggle field="blockPublicAcls" label="Block Public ACLs" defaultVal={true} />
+                                            <Sel field="corsPolicy" label="CORS Policy" options={['Strict (Allowed Origins)', 'Wildcard (*)', 'None']} defaultVal="Strict (Allowed Origins)" />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── CI/CD PIPELINE ─────────────────────────────
+                                    if (ct === 'cicd') return <div className="space-y-4">
+                                        <EntityPanel />
+                                        <Sec icon={GitBranch} title="Pipeline Engine">
+                                            <Sel field="cicdPlatform" label="CI/CD Platform" options={['GitHub Actions', 'GitLab CI', 'Jenkins', 'CircleCI', 'AWS CodePipeline']} defaultVal="GitHub Actions" />
+                                            <Sel field="runnerType" label="Build Runners" options={['Cloud Hosted (Shared)', 'Self-Hosted (Private VPC)']} defaultVal="Cloud Hosted (Shared)" />
+                                        </Sec>
+                                        <Sec icon={Shield} title="Supply Chain Security">
+                                            <Toggle field="secretScanning" label="Automated Secret Scanning" defaultVal={true} />
+                                            <Toggle field="dependencyCheck" label="SCA Dependency Scanning" defaultVal={true} />
+                                            <Toggle field="imageSigning" label="Container Image Signing (Cosign)" defaultVal={false} />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
                                     // ── ROUTER / SWITCH ──────────────────────────────
                                     if (ct === 'router' || ct === 'switch') return <div className="space-y-4">
                                         <EntityPanel />
@@ -2025,22 +2290,37 @@ function ArchitectContent() {
                                         </Sec>
                                     </div>;
 
-                                    // ── ENDPOINT / LAPTOP ────────────────────────────
+                                    // ── ENDPOINT / LAPTOP / IOT ────────────────────────────
                                     if (ct === 'node') return <div className="space-y-4">
                                         <EntityPanel />
-                                        <Sec icon={Database} title="Workstation OS">
-                                            <Sel field="osFamily" label="OS Platform" options={['Windows 11 Corporate', 'Windows 10', 'macOS Sonoma', 'Ubuntu Desktop']} defaultVal="Windows 11 Corporate" />
+                                        <Sec icon={Database} title={d.subtype === 'iot_device' ? "Device Firmware" : "Workstation OS"}>
+                                            {d.subtype === 'iot_device' ? (
+                                                <Sel field="osFamily" label="OS Platform" options={['Embedded RTOS', 'Custom Linux Firmware', 'BusyBox Linux', 'VxWorks']} defaultVal="Embedded RTOS" />
+                                            ) : (
+                                                <Sel field="osFamily" label="OS Platform" options={['Windows 11 Corporate', 'Windows 10', 'macOS Sonoma', 'Ubuntu Desktop']} defaultVal="Windows 11 Corporate" />
+                                            )}
                                         </Sec>
                                         <Sec icon={Globe} title="Network Interface (WLAN/LAN)">
                                             <TxtInput field="ipAddress" label="IPv4 Address" placeholder="10.10.10.45" />
                                             <TxtInput field="defaultGateway" label="Default Gateway" placeholder="10.10.10.1" />
                                             <Toggle field="dhcpEnabled" label="DHCP Client" defaultVal={true} />
+                                            {d.subtype === 'iot_device' && (
+                                                <Sel field="iotProtocol" label="Telemetry Protocol" options={['MQTT', 'CoAP', 'HTTP/REST', 'AMQP']} defaultVal="MQTT" />
+                                            )}
                                         </Sec>
-                                        <Sec icon={Shield} title="Endpoint Security (EDR/AV)">
-                                            <Toggle field="antivirusEnabled" label="Windows Defender / AV Active" defaultVal={true} />
-                                            <Toggle field="edrAgent" label="EDR Agent (CrowdStrike/SentinelOne)" defaultVal={false} />
-                                            <Sel field="privilegeLevel" label="User Context privilege" options={['Standard User', 'Local Administrator']} defaultVal="Standard User" />
-                                        </Sec>
+                                        {d.subtype !== 'iot_device' ? (
+                                            <Sec icon={Shield} title="Endpoint Security (EDR/AV)">
+                                                <Toggle field="antivirusEnabled" label="Windows Defender / AV Active" defaultVal={true} />
+                                                <Toggle field="edrAgent" label="EDR Agent (CrowdStrike/SentinelOne)" defaultVal={false} />
+                                                <Sel field="privilegeLevel" label="User Context privilege" options={['Standard User', 'Local Administrator']} defaultVal="Standard User" />
+                                            </Sec>
+                                        ) : (
+                                            <Sec icon={Shield} title="Device Security">
+                                                <Toggle field="firmwareSigned" label="Require Cryptographic Firmware Signatures" defaultVal={true} />
+                                                <Toggle field="defaultPasswords" label="Using Default Credentials (Insecure!)" defaultVal={true} />
+                                                <Toggle field="secureBoot" label="Hardware Secure Boot" defaultVal={false} />
+                                            </Sec>
+                                        )}
                                         <SensSlider />
                                     </div>;
 
@@ -2098,15 +2378,19 @@ function ArchitectContent() {
                                             const hasSIEM = nodes.some(n => (n.data as any)?.componentType === 'siem');
                                             const hasFW = nodes.some(n => (n.data as any)?.componentType === 'firewall' && (n.data as any)?.defaultPolicy !== 'Default Allow (Insecure)');
                                             // Target-specific controls
-                                            const encrypted = !!(td.encryptionAtRest || td.tlsEnforced || td.tlsSyslog || td.encryptionInTransit);
+                                            const encrypted = !!(td.encryptionAtRest || td.tlsEnforced || td.tlsSyslog || td.encryptionInTransit || td.fileEncryption);
                                             const strongAuth = (td.authMethod || '').includes('Key-based') || (td.authMethod || '').includes('Active Directory') || td.mfaRequired === true;
                                             const hasLocalFW = td.localFirewall !== false;
                                             const hasEDR = !!(td.edrAgent || td.antivirusEnabled !== false);
-                                            const isPublic = td.exposure === 'Public' || td.componentType === 'internet';
+                                            const isPublic = td.exposure === 'Public Facing' || td.exposure === 'Public' || td.componentType === 'internet' || td.componentType === 'cdn' || td.componentType === 'waf';
                                             const ip = td.ipAddress || '?.?.?.?';
                                             const os = td.os || td.osFamily || 'Linux';
                                             const webSvc = td.webService && td.webService !== 'None' ? td.webService : '';
                                             const dbSvc = td.dbService && td.dbService !== 'None' ? td.dbService : '';
+                                            const mailSvc = td.mailAgent && td.mailAgent !== 'None' ? td.mailAgent : '';
+                                            const fileSvc = td.fileProtocol && td.fileProtocol !== 'None' ? td.fileProtocol : '';
+                                            const svcs = [webSvc, dbSvc, mailSvc, fileSvc].filter(Boolean).join(', ');
+
                                             const tLabel = (td.label as string) || targetNode.id;
                                             const curVector = attackVector;
 
@@ -2123,7 +2407,7 @@ function ArchitectContent() {
                                             } else if (hasIDS) {
                                                 log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `IDS flagged anomalous ${reconTech} probe on ${ip}. Alert: Medium. No firewall to auto-block — attacker got partial map.` });
                                             } else {
-                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `${reconTech} completed silently on ${ip} [${tLabel}]. OS: ${os}. Open ports: ${td.customPorts || '22,80,443'}.${webSvc ? ' ' + webSvc + ' detected.' : ''} No monitoring.` });
+                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `${reconTech} completed silently on ${ip} [${tLabel}]. OS: ${os}. Open ports: ${td.customPorts || '22,80,443'}.${svcs ? ' Services: ' + svcs + ' detected.' : ''} No monitoring.` });
                                             }
 
                                             // ── PHASE 2: INITIAL ACCESS ─────────────────────────────────
@@ -2132,16 +2416,16 @@ function ArchitectContent() {
                                             } else if (curVector === 'SQL Injection' && !webSvc && td.componentType !== 'api') {
                                                 log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `No web service on ${tLabel} — SQLi has no attack surface here. Invalid vector for target type (${td.componentType || 'unknown'}).` });
                                             } else if (curVector === 'SQL Injection' && hasWAF) {
-                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF blocked SQLi on ${ip}. Rule: OWASP CRS SQL-001. POST body sanitized. ${dbSvc || 'Database'} access denied. Attacker IP auto-banned.` });
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF blocked SQLi on ${ip}. Rule: OWASP CRS SQL-001. POST body sanitized. ${svcs || 'Database'} access denied. Attacker IP auto-banned.` });
                                             } else if ((curVector === 'Brute Force SSH/RDP' || curVector === 'Credential Stuffing') && strongAuth) {
-                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} enforces ${td.authMethod || 'key-based auth/MFA'}. 0/10,000 credentials matched. SSH key requirement not met. Attack failed.` });
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} enforces ${td.authMethod || 'key-based auth/MFA'}. 0/10,000 credentials matched. Attack failed.` });
                                             } else if (curVector === 'Exploit Public Service' && !isPublic) {
                                                 log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} is not publicly exposed. No external attack surface. Network segmentation effective.` });
                                             } else if (hasFW && hasIDS) {
                                                 log.push({ phase: '🚪 Initial Access', result: 'DETECTED', detail: `${curVector} against ${ip} detected by IDS+FW. Session terminated. Alert: High. SOC notified. No foothold established.` });
                                             } else {
                                                 const d2 = curVector === 'SQL Injection'
-                                                    ? `SQLi: POST /login → admin'-- → ${dbSvc || 'DB'} auth bypass. Session token obtained.`
+                                                    ? `SQLi: POST /login → admin'-- → ${svcs || 'DB'} auth bypass. Session token obtained.`
                                                     : curVector === 'Phishing Email'
                                                         ? `Spear-phish to ${tLabel}. .docm macro → ${os.includes('Windows') ? 'PowerShell dropper (AMSI bypass)' : 'bash reverse shell (port 4444)'}. C2 callback received.`
                                                         : curVector === 'Brute Force SSH/RDP'
@@ -2174,33 +2458,29 @@ function ArchitectContent() {
                                                 if (hasCDN) {
                                                     log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `DDoS attack mitigated. No privilege escalation attempted or needed.` });
                                                 } else {
-                                                    log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `No privilege required to disrupt service. Target ${tLabel} crashed; services stopped responding (OOM/CPU exhaustion).` });
+                                                    log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `Node ${tLabel} is completely offline. Uptime disrupted. No further escalation needed.` });
                                                 }
-                                            } else if (hasEDR && strongAuth) {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `Credential Guard + EDR blocked LSASS dump & token impersonation on ${tLabel}. Mimikatz terminated. No privilege obtained.` });
-                                            } else if (strongAuth) {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'DETECTED', detail: `Strong auth resisted standard priv-esc on ${tLabel}. Partial access via ${os.includes('Win') ? 'named pipe impersonation' : 'SUID binary'} — limited priv only. EDR alert fired.` });
-                                            } else if (hasEDR) {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'DETECTED', detail: `EDR detected ${os.includes('Win') ? 'PrintSpoofer exploit' : 'Dirty COW memory write'} on ${tLabel}. Partially mitigated — user shell retained but root blocked.` });
+                                            } else if (os.includes('Win') && hasEDR) {
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `EDR blocked Token Impersonation attempt by ${curVector} injected process. Process forcibly halted.` });
                                             } else {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `${os.includes('Win') ? 'PrintSpoofer — SeImpersonatePrivilege' : 'Dirty COW (CVE-2016-5195) — /etc/passwd written'}. Root/SYSTEM on ${ip}. No detection.` });
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `Exploit successful. Attacker escalated from low-privilege (${td.privilegeLevel || 'Standard User'}) to SYSTEM/root context on ${tLabel}.` });
                                             }
 
-                                            // ── PHASE 5: EXFILTRATION ────────────────────────────────────
+                                            // ── PHASE 5: EXFILTRATION ───────────────────────────────────
                                             if (curVector === 'Volumetric DDoS') {
                                                 if (hasCDN) {
-                                                    log.push({ phase: '📤 Exfil', result: 'BLOCKED', detail: `DDoS mitigated by infrastructure. Service remains available. No data breached.` });
+                                                    log.push({ phase: '📤 Exfil', result: 'BLOCKED', detail: `Target ${tLabel} remained secure. 0 Bytes data lost.` });
                                                 } else {
-                                                    log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `DDoS attack successful. Target ${tLabel} offline. Estimated downtime: highly elevated. No data exfiltrated, entirely disruptive.` });
+                                                    log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Data exfiltration was not the goal. Availability impact: 100%. Node unroutable.` });
                                                 }
-                                            } else if (hasSIEM && encrypted) {
-                                                log.push({ phase: '📤 Exfil', result: 'BLOCKED', detail: `SIEM DLP: anomalous outbound volume from ${ip} exceeded threshold. All egress blocked at FW. ${dbSvc ? dbSvc + ' data ' : 'Data '}secured. Incident #INC-${Math.floor(Math.random() * 9000 + 1000)} opened.` });
+                                            } else if (hasFW && hasIDS) {
+                                                log.push({ phase: '📤 Exfil', result: 'BLOCKED', detail: `DLP/IDS triggered on large outbound transfer sequence to unknown IP. Firewall severed the reverse connection. Exfil stopped at 2MB.` });
                                             } else if (hasSIEM) {
-                                                log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `SIEM flagged anomalous DNS TXT from ${ip}. ~47MB blocked post-alert. ~2.1MB partial exfil. Forensic capture started.` });
+                                                log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `SIEM flagged abnormal outbound traffic (1.2GB) over port 443 to suspicious ASN. No automatic blocking. Data likely compromised.` });
                                             } else if (encrypted) {
-                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Encrypted HTTPS C2 — traffic blends with normal HTTPS. ${dbSvc ? dbSvc + ' dump, ' : ''}SSH keys, /etc/shadow. 2.3GB sent. No SIEM = blind spot.` });
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Encrypted HTTPS C2 — traffic blends with normal HTTPS. ${svcs ? svcs + ' dump, ' : ''}SSH keys, /etc/shadow. 2.3GB sent. No SIEM = blind spot.` });
                                             } else {
-                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP from ${ip}:21. PII CSV, ${dbSvc ? dbSvc + ' records, ' : ''}47,000+ rows sent to attacker C2. No alerts. Fully undetected.` });
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP from ${ip}:21. PII CSV, ${svcs ? svcs + ' records, ' : ''}47,000+ rows sent to attacker C2. No alerts. Fully undetected.` });
                                             }
 
                                             // Stream results phase-by-phase with colour-coded node animations
