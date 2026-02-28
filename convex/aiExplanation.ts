@@ -1,3 +1,4 @@
+"use node";
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { GoogleGenAI } from "@google/genai";
@@ -5,47 +6,50 @@ import { GoogleGenAI } from "@google/genai";
 export const generateExecutiveSummary = action({
     args: {
         projectId: v.id("projects"),
-        findings: v.array(
-            v.object({
-                componentId: v.optional(v.string()),
-                description: v.string(),
-                severity: v.string(),
-                complianceMappings: v.array(v.string())
-            })
-        ),
+        findings: v.array(v.any()),
         impactScore: v.number()
     },
     handler: async (ctx, args) => {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+            return "AI Summary unavailable: GEMINI_API_KEY environment variable is not configured in Convex.";
+        }
 
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const ai = new GoogleGenAI({ apiKey });
 
         const prompt = `
-      You are an expert Enterprise Security Architect.
-      I have an architecture diagram that just underwent automated threat modeling and graph traversal.
+You are an expert Enterprise Security Architect and CISO advisor.
+I have an architecture diagram that just underwent automated threat modeling including graph traversal and MITRE ATT&CK mapping.
 
-      Here are the security findings:
-      ${JSON.stringify(args.findings, null, 2)}
+Security Findings:
+${JSON.stringify(args.findings.map((f: any) => ({
+            component: f.description,
+            severity: f.severity,
+            mitreId: f.mitreId,
+            mitreTactic: f.mitreTactic,
+            compliance: f.complianceMappings
+        })), null, 2)}
 
-      Total Impact Score: ${args.impactScore} / 100
+Total Exposure Score: ${args.impactScore} / 100
 
-      Write a concise, 3-paragraph executive summary of the architectural risk.
-      - Paragraph 1: Business impact (what happens if we deploy this).
-      - Paragraph 2: The critical vulnerabilities found.
-      - Paragraph 3: Recommended mitigation steps for the engineering team.
-      
-      Do not use markdown formatting, return plain text.
+Write a concise, 3-paragraph executive security brief.
+- Paragraph 1: Business impact — what is the blast radius if this architecture is deployed as-is?
+- Paragraph 2: Top critical vulnerabilities and their MITRE ATT&CK mappings.
+- Paragraph 3: Priority remediation steps for the engineering team to address immediately.
+
+Be direct, authoritative, and specific. No markdown formatting, return plain text.
     `;
 
         try {
             const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
+                model: "gemini-2.0-flash",
                 contents: prompt,
             });
 
-            return response.text;
+            return response.text ?? "AI generated an empty response. Please try again.";
         } catch (error) {
-            console.error("Failed to generate AI summary", error);
-            return "AI Summary unavailable. Please check API configuration.";
+            console.error("Gemini API call failed:", error);
+            return "AI Summary generation failed. The Gemini API may be temporarily unavailable or the model is not accessible with your current API key.";
         }
     }
 });

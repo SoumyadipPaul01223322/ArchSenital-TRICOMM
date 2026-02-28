@@ -15,8 +15,8 @@ export default async function DashboardIndex() {
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-12 max-w-xl mx-auto">
                     <h2 className="text-2xl font-bold mb-3 text-white">Select an Organization</h2>
                     <p className="text-white/60 mb-8 max-w-sm mx-auto">ArchSentinel is an enterprise platform. Please create or select an organization from the top-right menu to manage architectures.</p>
-                    <div className="inline-block p-1 rounded-xl bg-gradient-to-tr from-purple-500/20 to-transparent">
-                        <div className="bg-black/80 px-4 py-2 text-sm font-medium text-purple-400 rounded-lg backdrop-blur-md border border-white/5">
+                    <div className="inline-block p-1 rounded-xl bg-gradient-to-tr from-cyan-500/20 to-transparent">
+                        <div className="bg-black/80 px-4 py-2 text-sm font-medium text-cyan-400 rounded-lg backdrop-blur-md border border-white/5">
                             ↑ Use the Switcher in the Header
                         </div>
                     </div>

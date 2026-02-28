@@ -45,6 +45,13 @@ export default defineSchema({
         type: v.string(),
         position: v.object({ x: v.number(), y: v.number() }),
         data: v.any(), // Flexible component data configurations
+        measured: v.optional(v.any()),
+        style: v.optional(v.any()),
+        selected: v.optional(v.boolean()),
+        dragging: v.optional(v.boolean()),
+        positionAbsolute: v.optional(v.any()),
+        width: v.optional(v.number()),
+        height: v.optional(v.number()),
       })
     ),
     edges: v.array(
@@ -53,6 +60,12 @@ export default defineSchema({
         source: v.string(),
         target: v.string(),
         data: v.optional(v.any()), // e.g. { encrypted: boolean }
+        animated: v.optional(v.boolean()),
+        style: v.optional(v.any()),
+        selected: v.optional(v.boolean()),
+        sourceHandle: v.optional(v.any()),
+        targetHandle: v.optional(v.any()),
+        type: v.optional(v.string())
       })
     ),
     riskScore: v.number(),
