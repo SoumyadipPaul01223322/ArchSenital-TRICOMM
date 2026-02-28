@@ -1646,64 +1646,91 @@ function ArchitectContent() {
                                         const runEvaluate = () => {
                                             if (!targetNode) { setAttackRunning(false); return; }
                                             const td = targetNode.data as any;
-                                            const hasWAF = nodes.some(n => (n.data as any)?.componentType === 'cdn' || (n.data as any)?.wafEnabled);
-                                            const hasIDS = nodes.some(n => (n.data as any)?.enableIDS || (n.data as any)?.componentType === 'siem');
+                                            // Architecture-wide controls
+                                            const hasWAF = nodes.some(n => (n.data as any)?.componentType === 'cdn' || (n.data as any)?.componentType === 'waf' || (n.data as any)?.wafEnabled === true);
+                                            const hasIDS = nodes.some(n => (n.data as any)?.enableIDS === true || (n.data as any)?.componentType === 'siem');
+                                            const hasSIEM = nodes.some(n => (n.data as any)?.componentType === 'siem');
                                             const hasFW = nodes.some(n => (n.data as any)?.componentType === 'firewall' && (n.data as any)?.defaultPolicy !== 'Default Allow (Insecure)');
-                                            const encrypted = !!(td.encryptionAtRest || td.tlsEnforced || td.tlsSyslog);
-                                            const strongAuth = (td.authMethod || '').includes('Key-based') || (td.authMethod || '').includes('Active Directory');
+                                            // Target-specific controls
+                                            const encrypted = !!(td.encryptionAtRest || td.tlsEnforced || td.tlsSyslog || td.encryptionInTransit);
+                                            const strongAuth = (td.authMethod || '').includes('Key-based') || (td.authMethod || '').includes('Active Directory') || td.mfaRequired === true;
                                             const hasLocalFW = td.localFirewall !== false;
+                                            const hasEDR = !!(td.edrAgent || td.antivirusEnabled !== false);
+                                            const isPublic = td.exposure === 'Public' || td.componentType === 'internet';
                                             const ip = td.ipAddress || '?.?.?.?';
                                             const os = td.os || td.osFamily || 'Linux';
                                             const webSvc = td.webService && td.webService !== 'None' ? td.webService : '';
                                             const dbSvc = td.dbService && td.dbService !== 'None' ? td.dbService : '';
                                             const tLabel = (td.label as string) || targetNode.id;
-                                            const curPhase = attackPhase;
                                             const curVector = attackVector;
 
                                             const log: typeof attackLog = [];
 
-                                            // Phase 1 — Recon
-                                            if (hasFW || hasIDS) {
-                                                log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `IDS/Firewall detected ${curVector === 'Nmap SYN Scan' ? 'SYN flood from attacker IP' : 'probe'} targeting ${ip}. Alert raised. Scan throttled.` });
+                                            // ── PHASE 1: RECON ─────────────────────────────────────────
+                                            const reconTech = PHASE_ATTACKS['recon'].includes(curVector) ? curVector : 'Nmap SYN Scan';
+                                            if (hasFW && hasIDS) {
+                                                log.push({ phase: '🔎 Recon', result: 'BLOCKED', detail: `Firewall + IDS active. ${reconTech} from attacker IP rate-limited and dropped. Target ${ip} shielded. 0 open ports returned to attacker.` });
+                                            } else if (hasFW) {
+                                                log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `Firewall logged ${reconTech} targeting ${ip}. Alert raised. Rate-limited, partial results. No auto-block without IDS.` });
+                                            } else if (hasIDS) {
+                                                log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `IDS flagged anomalous ${reconTech} probe on ${ip}. Alert: Medium. No firewall to auto-block — attacker got partial map.` });
                                             } else {
-                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `${curVector} completed on ${ip} [${tLabel}]. OS: ${os}. Open ports: ${td.customPorts || '22,80,443'}.${webSvc ? ' ' + webSvc + ' detected.' : ''}` });
+                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `${reconTech} completed silently on ${ip} [${tLabel}]. OS: ${os}. Open ports: ${td.customPorts || '22,80,443'}.${webSvc ? ' ' + webSvc + ' detected.' : ''} No monitoring.` });
                                             }
 
-                                            // Phase 2 — Initial Access
-                                            if (hasWAF && curVector === 'SQL Injection') {
-                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF intercepted SQLi payload on ${ip}. Rule: OWASP CRS SQL-001. Request dropped. No DB access gained.` });
-                                            } else if (strongAuth && (curVector === 'Brute Force SSH/RDP' || curVector === 'Credential Stuffing')) {
-                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} uses key-based auth. Password spray failed after 10,000 attempts. No valid creds.` });
+                                            // ── PHASE 2: INITIAL ACCESS ─────────────────────────────────
+                                            if (curVector === 'SQL Injection' && !webSvc && td.componentType !== 'api') {
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `No web service on ${tLabel} — SQLi has no attack surface here. Invalid vector for target type (${td.componentType || 'unknown'}).` });
+                                            } else if (curVector === 'SQL Injection' && hasWAF) {
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF blocked SQLi on ${ip}. Rule: OWASP CRS SQL-001. POST body sanitized. ${dbSvc || 'Database'} access denied. Attacker IP auto-banned.` });
+                                            } else if ((curVector === 'Brute Force SSH/RDP' || curVector === 'Credential Stuffing') && strongAuth) {
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} enforces ${td.authMethod || 'key-based auth/MFA'}. 0/10,000 credentials matched. SSH key requirement not met. Attack failed.` });
+                                            } else if (curVector === 'Exploit Public Service' && !isPublic) {
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} is not publicly exposed. No external attack surface. Network segmentation effective.` });
+                                            } else if (hasFW && hasIDS) {
+                                                log.push({ phase: '🚪 Initial Access', result: 'DETECTED', detail: `${curVector} against ${ip} detected by IDS+FW. Session terminated. Alert: High. SOC notified. No foothold established.` });
                                             } else {
-                                                const detail = curVector === 'SQL Injection'
-                                                    ? `SQLi on ${ip}: POST /login → admin'-- → ${dbSvc || 'DB'} auth bypass. Session token obtained.`
+                                                const d2 = curVector === 'SQL Injection'
+                                                    ? `SQLi: POST /login → admin'-- → ${dbSvc || 'DB'} auth bypass. Session token obtained.`
                                                     : curVector === 'Phishing Email'
-                                                        ? `Spear-phish to ${tLabel}. .docm macro → ${os.includes('Windows') ? 'PowerShell dropper' : 'bash reverse shell'}. C2 callback received.`
-                                                        : `${curVector} on ${tLabel} (${ip}, ${os}). Foothold established.`;
-                                                log.push({ phase: '🚪 Initial Access', result: 'SUCCESS', detail });
+                                                        ? `Spear-phish to ${tLabel}. .docm macro → ${os.includes('Windows') ? 'PowerShell dropper (AMSI bypass)' : 'bash reverse shell (port 4444)'}. C2 callback received.`
+                                                        : curVector === 'Brute Force SSH/RDP'
+                                                            ? `Brute-force on ${ip}:22. Weak credential found after 3,241 attempts. Logged in as '${os.includes('Win') ? 'Administrator' : 'root'}'.`
+                                                            : `${curVector} against ${tLabel} (${ip}, ${os}). Foothold established.`;
+                                                log.push({ phase: '🚪 Initial Access', result: 'SUCCESS', detail: d2 });
                                             }
 
-                                            // Phase 3 — Execution
-                                            if (hasLocalFW && hasIDS) {
-                                                log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `SIEM/IDS flagged ${curVector} → C2 beacon. Process: cmd.exe → powershell.exe. Alert: Critical. Execution sandboxed.` });
+                                            // ── PHASE 3: EXECUTION ──────────────────────────────────────
+                                            if (hasEDR && hasIDS) {
+                                                log.push({ phase: '⚙️ Execution', result: 'BLOCKED', detail: `EDR quarantined payload at memory-injection on ${tLabel}. SIEM correlated the attempt. Process chain killed. IOC added to blocklist.` });
+                                            } else if (hasLocalFW && hasIDS) {
+                                                log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `IDS flagged C2 beacon on ${ip}. Alert: Critical. Outbound blocked by local FW. SOC investigating. Backdoor unstable.` });
+                                            } else if (hasEDR) {
+                                                log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `EDR flagged ${curVector} behavior on ${tLabel}. Payload sandboxed. Persistence blocked. No stable C2.` });
                                             } else {
-                                                log.push({ phase: '⚙️ Execution', result: 'SUCCESS', detail: `${curVector} executed on ${tLabel} (${os}). Persistent backdoor installed. C2 heartbeat: 30s.` });
+                                                log.push({ phase: '⚙️ Execution', result: 'SUCCESS', detail: `${curVector} ran on ${tLabel} (${os}). Persistence: ${os.includes('Win') ? 'HKLM Run key backdoor' : 'crontab @reboot reverse-shell'}. C2 active: 30s heartbeat.` });
                                             }
 
-                                            // Phase 4 — Priv Esc
-                                            if (os.includes('Windows') && strongAuth) {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `Token impersonation blocked by Windows Defender Credential Guard on ${tLabel}.` });
+                                            // ── PHASE 4: PRIVILEGE ESCALATION ───────────────────────────
+                                            if (hasEDR && strongAuth) {
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `Credential Guard + EDR blocked LSASS dump & token impersonation on ${tLabel}. Mimikatz terminated. No privilege obtained.` });
+                                            } else if (strongAuth) {
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'DETECTED', detail: `Strong auth resisted standard priv-esc on ${tLabel}. Partial access via ${os.includes('Win') ? 'named pipe impersonation' : 'SUID binary'} — limited priv only. EDR alert fired.` });
+                                            } else if (hasEDR) {
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'DETECTED', detail: `EDR detected ${os.includes('Win') ? 'PrintSpoofer exploit' : 'Dirty COW memory write'} on ${tLabel}. Partially mitigated — user shell retained but root blocked.` });
                                             } else {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `${os.includes('Win') ? 'PrintSpoofer — SeImpersonatePrivilege' : 'Dirty COW (CVE-2016-5195) — /etc/passwd written'}. Root/SYSTEM obtained on ${ip}.` });
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `${os.includes('Win') ? 'PrintSpoofer — SeImpersonatePrivilege' : 'Dirty COW (CVE-2016-5195) — /etc/passwd written'}. Root/SYSTEM on ${ip}. No detection.` });
                                             }
 
-                                            // Phase 5 — Exfil
-                                            if (hasIDS && encrypted) {
-                                                log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `Anomalous outbound DNS TXT from ${ip} flagged by SIEM. ~47MB blocked. ~2.1MB partial exfil before alert. Incident ticket created.` });
+                                            // ── PHASE 5: EXFILTRATION ────────────────────────────────────
+                                            if (hasSIEM && encrypted) {
+                                                log.push({ phase: '📤 Exfil', result: 'BLOCKED', detail: `SIEM DLP: anomalous outbound volume from ${ip} exceeded threshold. All egress blocked at FW. ${dbSvc ? dbSvc + ' data ' : 'Data '}secured. Incident #INC-${Math.floor(Math.random() * 9000 + 1000)} opened.` });
+                                            } else if (hasSIEM) {
+                                                log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `SIEM flagged anomalous DNS TXT from ${ip}. ~47MB blocked post-alert. ~2.1MB partial exfil. Forensic capture started.` });
                                             } else if (encrypted) {
-                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `HTTPS C2 exfil — data encrypted in transit. ${dbSvc ? dbSvc + ' dump, ' : ''}SSH keys, /etc/shadow. 2.3 GB sent. No SIEM monitoring detected.` });
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Encrypted HTTPS C2 — traffic blends with normal HTTPS. ${dbSvc ? dbSvc + ' dump, ' : ''}SSH keys, /etc/shadow. 2.3GB sent. No SIEM = blind spot.` });
                                             } else {
-                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP dump from ${ip}. PII CSV, ${dbSvc ? dbSvc + ' records, ' : ''}47,000+ rows exfiltrated to attacker C2.` });
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP from ${ip}:21. PII CSV, ${dbSvc ? dbSvc + ' records, ' : ''}47,000+ rows sent to attacker C2. No alerts. Fully undetected.` });
                                             }
 
                                             // Batch node animation — single setNodes call
