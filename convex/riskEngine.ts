@@ -118,15 +118,17 @@ function calculateBaseVulnerability(nodeData: any) {
                 complianceMappings: ["PCI-DSS 1.2"]
             });
         }
-        if (nodeData.enableIDS === false || nodeData.enableIDS === undefined) {
-            vulnerabilityScore += 10;
+        // Only flag IDS as disabled if it was explicitly set to false by the user.
+        // undefined = toggle was never touched = defaults to the UI's defaultVal (true)
+        if (nodeData.enableIDS === false) {
+            vulnerabilityScore += 20;
             localFindings.push({
-                message: "Firewall IDS/IPS is disabled.",
-                severity: 'Medium',
+                message: "Firewall IDS/IPS is explicitly disabled — intrusion attempts will not be detected or blocked.",
+                severity: 'High',
                 mitreTactic: "Defense Evasion",
-                mitreTechnique: "Impair Defenses",
-                mitreId: "T1562",
-                complianceMappings: ["SOC2 CC7.2"]
+                mitreTechnique: "Impair Defenses: Disable or Modify System Firewall",
+                mitreId: "T1562.004",
+                complianceMappings: ["SOC2 CC7.2", "PCI-DSS 11.4", "NIST SP 800-53 SI-3"]
             });
         }
     }
@@ -504,10 +506,10 @@ export const simulateAttack = mutation({
             // Attacker nodes are obviously already compromised conceptually
             if (currentNode.data.componentType === "attacker") return true;
 
-            // Connectivity nodes like routers and switches just pass traffic 
-            // from attackers unless a firewall blocks it before them. 
-            // For the visual simulation blast radius, we consider them 'traversed / compromised'.
-            if (['router', 'switch', 'internet'].includes(currentNode.data.componentType)) return true;
+            // Firewalls and connectivity nodes always get traversed — they are not "targets",
+            // they are gateways. A secured firewall still passes traffic; it just adds risk findings
+            // of its own. This ensures downstream nodes are always evaluated for their own vulnerabilities.
+            if (['router', 'switch', 'internet', 'firewall', 'lb', 'cdn'].includes(currentNode.data.componentType)) return true;
 
             // If an attacker is moving laterally from a compromised source
             if (sourceNodeId) {
@@ -570,6 +572,24 @@ export const simulateAttack = mutation({
                 });
             });
         });
+
+        // 4b. Architecture-wide IDS/SIEM absence check
+        const hasAnyIDS = nodes.some((n: any) =>
+            n.data?.componentType === 'siem' ||
+            n.data?.enableIDS === true
+        );
+        if (!hasAnyIDS && nodes.length > 0) {
+            totalSystemRisk += 25;
+            allFindings.unshift({
+                componentId: 'architecture',
+                description: '[Architecture] No IDS/IPS or SIEM detected in the entire infrastructure. Intrusions, lateral movement, and data exfiltration will go completely undetected.',
+                severity: 'Critical',
+                mitreTactic: 'Defense Evasion',
+                mitreTechnique: 'Impair Defenses: Disable or Modify Tools',
+                mitreId: 'T1562.001',
+                complianceMappings: ['SOC2 CC7.2', 'PCI-DSS 10.6', 'NIST SP 800-53 SI-4', 'ISO 27001:A.12.4.1']
+            });
+        }
 
         // Multiply total risk by blast radius percentage
         const blastRadiusPercentage = compromised.size / Math.max(nodes.length, 1);
