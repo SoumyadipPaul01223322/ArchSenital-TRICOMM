@@ -32,6 +32,135 @@ import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadius
 const initialNodes: Node[] = [];
 const initialEdges: Edge[] = [];
 
+// Pre-built attack scenarios for visualization
+const ATTACK_SCENARIOS = [
+    {
+        id: 'sqli',
+        label: 'SQL Injection',
+        shortLabel: 'SQLi',
+        icon: '💉',
+        color: '#f97316', // orange
+        glow: 'rgba(249,115,22,0.7)',
+        border: '#f97316',
+        bg: '#1a0800',
+        mitreId: 'T1190',
+        mitreTactic: 'Initial Access',
+        description: 'Attacker injects malicious SQL via unparameterized inputs to dump or corrupt the database.',
+        targetTypes: ['server', 'vps', 'node', 'database'],
+        killChain: [
+            { step: 'Reconnaissance', detail: 'Crawling public endpoints for SQL error signatures & form inputs.', delay: 0 },
+            {
+                step: 'Injection Payload', detail: `
+SELECT * FROM users WHERE id='1' OR '1'='1'--`, delay: 1200
+            },
+            { step: 'Auth Bypass', detail: 'Login bypassed. Admin session obtained via UNION-based extraction.', delay: 2600 },
+            { step: 'Data Exfil', detail: 'INFORMATION_SCHEMA enumerated. 47,000 user records dumped to attacker C2.', delay: 4000 },
+        ]
+    },
+    {
+        id: 'broken_auth',
+        label: 'Broken Authentication',
+        shortLabel: 'Auth',
+        icon: '🔓',
+        color: '#ef4444', // red
+        glow: 'rgba(239,68,68,0.7)',
+        border: '#ef4444',
+        bg: '#1a0505',
+        mitreId: 'T1078',
+        mitreTactic: 'Defense Evasion',
+        description: 'Weak or missing authentication allows an attacker to hijack sessions, impersonate users, or brute-force tokens.',
+        targetTypes: ['server', 'vps', 'node', 'attacker'],
+        killChain: [
+            { step: 'Credential Stuffing', detail: 'Automated spray of 15,000 leaked credentials against login endpoint.', delay: 0 },
+            { step: 'Session Hijack', detail: 'Weak JWT secret cracked. Token forged with admin:true claim.', delay: 1400 },
+            { step: 'Privilege Escalation', detail: 'Account elevated from user to admin via insecure IDOR endpoint /api/users/<id>/role.', delay: 2800 },
+            { step: 'Persistence', detail: 'Backdoor admin account created. SSH key pair injected into authorized_keys.', delay: 4200 },
+        ]
+    },
+    {
+        id: 'data_exfil',
+        label: 'Data Exfiltration',
+        shortLabel: 'Exfil',
+        icon: '📤',
+        color: '#8b5cf6', // purple
+        glow: 'rgba(139,92,246,0.7)',
+        border: '#8b5cf6',
+        bg: '#0f0520',
+        mitreId: 'T1041',
+        mitreTactic: 'Exfiltration',
+        description: 'Attacker copies sensitive data out of the network over a covert channel (C2, DNS tunneling, HTTPS).',
+        targetTypes: ['server', 'vps', 'node', 'router', 'switch'],
+        killChain: [
+            { step: 'C2 Establishment', detail: 'Beacon deployed. Attacker establishes out-of-band C2 over port 443 to attacker-controlled domain.', delay: 0 },
+            { step: 'Data Discovery', detail: 'Sensitive files mapped: /etc/passwd, ~/.ssh, /var/lib/mysql, PII CSV exports.', delay: 1500 },
+            { step: 'Staging', detail: 'Data compressed and encrypted with AES-256 to avoid DLP detection. Split into 1MB chunks.', delay: 3000 },
+            { step: 'Exfiltration', detail: 'Chunks tunneled out via DNS TXT records. 2.3 GB exfiltrated before IDS alert fires.', delay: 4500 },
+        ]
+    },
+    {
+        id: 'mitm',
+        label: 'Man-in-the-Middle',
+        shortLabel: 'MITM',
+        icon: '🕵️',
+        color: '#06b6d4', // cyan
+        glow: 'rgba(6,182,212,0.7)',
+        border: '#06b6d4',
+        bg: '#00101a',
+        mitreId: 'T1557',
+        mitreTactic: 'Credential Access',
+        description: 'Attacker intercepts network traffic between nodes to steal credentials or inject malicious payloads.',
+        targetTypes: ['router', 'switch', 'server', 'vps', 'node'],
+        killChain: [
+            { step: 'ARP Poisoning', detail: 'Attacker floods LAN with gratuitous ARP replies, poisoning switch CAM table.', delay: 0 },
+            { step: 'Traffic Interception', detail: 'All traffic between target and gateway now routed through attacker. 100% packet visibility.', delay: 1500 },
+            { step: 'SSL Stripping', detail: 'HTTPS downgraded to HTTP on unprotected endpoints. Credentials transmitted in plaintext.', delay: 3000 },
+            { step: 'Session Injection', detail: 'Malicious JavaScript payload injected into HTTP response stream. XSS cookie theft executed.', delay: 4500 },
+        ]
+    },
+    {
+        id: 'ransomware',
+        label: 'Ransomware',
+        shortLabel: 'Ransom',
+        icon: '🔐',
+        color: '#facc15', // yellow
+        glow: 'rgba(250,204,21,0.7)',
+        border: '#facc15',
+        bg: '#1a1200',
+        mitreId: 'T1486',
+        mitreTactic: 'Impact',
+        description: 'Ransomware propagates laterally across all reachable nodes, encrypts critical data, and drops ransom notes.',
+        targetTypes: ['server', 'vps', 'node', 'router', 'switch', 'siem', 'firewall'],
+        killChain: [
+            { step: 'Initial Compromise', detail: 'Phishing email with malicious macro executed on endpoint. Initial foothold established.', delay: 0 },
+            { step: 'Lateral Movement', detail: 'SMB-exploiting worm propagates via EternalBlue (CVE-2017-0144) to all reachable hosts.', delay: 1200 },
+            { step: 'Encryption', detail: 'RSA-4096 + AES-256 key pairs generated per host. All .doc .db .bak files encrypted.', delay: 2600 },
+            { step: 'Ransom Drop', detail: 'README_DECRYPT.txt dropped on all infected hosts. Bitcoin address demands $450,000 in 72h.', delay: 4000 },
+        ]
+    },
+    {
+        id: 'priv_esc',
+        label: 'Privilege Escalation',
+        shortLabel: 'PrivEsc',
+        icon: '⬆️',
+        color: '#10b981', // emerald
+        glow: 'rgba(16,185,129,0.7)',
+        border: '#10b981',
+        bg: '#00120a',
+        mitreId: 'T1068',
+        mitreTactic: 'Privilege Escalation',
+        description: 'Attacker exploits a kernel vulnerability or misconfigured SUID binary to gain root/SYSTEM access.',
+        targetTypes: ['server', 'vps', 'node'],
+        killChain: [
+            { step: 'Low-Priv Shell', detail: 'Foothold via RCE. Attacker has www-data/low-privilege shell on target.', delay: 0 },
+            { step: 'Enumeration', detail: 'sudo -l, SUID binaries, and /etc/crontab scanned. Dirty COW (CVE-2016-5195) identified.', delay: 1400 },
+            { step: 'Exploit Execution', detail: 'Kernel exploit compiled and executed in-memory. Race condition triggers root shell.', delay: 2800 },
+            { step: 'Root Access', detail: 'Full root access achieved. Shadow file exfiltrated. Backdoor user added to /etc/passwd.', delay: 4200 },
+        ]
+    },
+];
+
+type AttackScenario = typeof ATTACK_SCENARIOS[number];
+
 // Professional AI fallback - never show raw failure to judges
 function generateFallbackSummary(score: number, findings: any[]): string {
     const criticals = findings.filter(f => f.severity === 'Critical').length;
@@ -120,7 +249,114 @@ const SensSlider = () => {
         </div>
     );
 };
-// ----------------------------------------------------------------------
+// ---- COMPONENT TREE: Parent categories & Child subtypes ----
+const COMPONENT_TREE = [
+    {
+        label: 'Compute & VMs',
+        children: [
+            { type: 'server', subtype: 'web_server', label: 'Web Server', icon: Server, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Apache / Nginx · HTTP/S', os: 'Ubuntu 22.04 / Win 2022' },
+            { type: 'server', subtype: 'app_server', label: 'App Server', icon: Server, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Node.js / Django / Spring', os: 'Ubuntu 22.04 LTS' },
+            { type: 'server', subtype: 'db_server', label: 'Database Server', icon: Database, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'MySQL / PostgreSQL / MSSQL', os: 'RHEL 9' },
+            { type: 'server', subtype: 'mail_server', label: 'Mail Server', icon: MessageSquare, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Postfix / Exchange · SMTP/IMAP', os: 'Win Server 2022' },
+            { type: 'server', subtype: 'file_server', label: 'File Server', icon: Database, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'SMB / NFS · Samba', os: 'Ubuntu 22.04 LTS' },
+            { type: 'vps', subtype: 'vps_linux', label: 'VPS (Linux)', icon: Cpu, color: 'text-indigo-400', bg: 'bg-indigo-500/8', border: 'border-indigo-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Cloud VM · 2–32 vCPU', os: 'Ubuntu / Debian / CentOS' },
+            { type: 'vps', subtype: 'vps_windows', label: 'VPS (Windows)', icon: Cpu, color: 'text-indigo-400', bg: 'bg-indigo-500/8', border: 'border-indigo-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Cloud VM · RDP enabled', os: 'Win Server 2019/2022' },
+        ]
+    },
+    {
+        label: 'Network Core',
+        children: [
+            { type: 'router', subtype: 'core_router', label: 'Core Router', icon: Activity, color: 'text-orange-400', bg: 'bg-orange-500/8', border: 'border-orange-500/15', riskBadge: 'GATE', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Cisco / Juniper · BGP/OSPF', os: 'Cisco IOS XE' },
+            { type: 'router', subtype: 'edge_router', label: 'Edge Router', icon: Activity, color: 'text-orange-400', bg: 'bg-orange-500/8', border: 'border-orange-500/15', riskBadge: 'GATE', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'WAN Peering · ISP gateway', os: 'Juniper MX' },
+            { type: 'switch', subtype: 'l3_switch', label: 'L3 Switch', icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/8', border: 'border-emerald-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Layer 3 · Inter-VLAN routing', os: 'Cisco IOS' },
+            { type: 'switch', subtype: 'l2_switch', label: 'L2 Switch', icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/8', border: 'border-emerald-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Layer 2 · VLAN segmentation', os: 'Cisco Catalyst' },
+            { type: 'cdn', subtype: 'cdn_edge', label: 'CDN Edge Node', icon: Cloud, color: 'text-cyan-400', bg: 'bg-cyan-500/8', border: 'border-cyan-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Cloudflare / Akamai · PoP', os: 'N/A (Managed)' },
+        ]
+    },
+    {
+        label: 'Endpoints & Nodes',
+        children: [
+            { type: 'node', subtype: 'windows_pc', label: 'Windows Workstation', icon: Cpu, color: 'text-blue-400', bg: 'bg-blue-500/8', border: 'border-blue-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Win 10/11 · Domain-joined', os: 'Windows 11 Pro' },
+            { type: 'node', subtype: 'linux_pc', label: 'Linux Workstation', icon: Cpu, color: 'text-blue-400', bg: 'bg-blue-500/8', border: 'border-blue-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Ubuntu Desktop · Dev machine', os: 'Ubuntu 22.04 Desktop' },
+            { type: 'node', subtype: 'iot_device', label: 'IoT / OT Device', icon: Zap, color: 'text-blue-400', bg: 'bg-blue-500/8', border: 'border-blue-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Camera / PLC / Sensor node', os: 'Embedded RTOS' },
+            { type: 'node', subtype: 'laptop', label: 'Laptop (BYOD)', icon: Cpu, color: 'text-blue-400', bg: 'bg-blue-500/8', border: 'border-blue-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'BYOD · Unmanaged device', os: 'macOS / Win / Ubuntu' },
+        ]
+    },
+    {
+        label: 'Security & Ops',
+        children: [
+            { type: 'firewall', subtype: 'ngfw', label: 'Next-Gen Firewall', icon: Shield, color: 'text-red-400', bg: 'bg-red-500/8', border: 'border-red-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Palo Alto / Fortinet NGFW', os: 'PAN-OS / FortiOS' },
+            { type: 'firewall', subtype: 'waf', label: 'WAF', icon: Shield, color: 'text-red-400', bg: 'bg-red-500/8', border: 'border-red-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Web App Firewall · OWASP', os: 'AWS WAF / ModSecurity' },
+            { type: 'firewall', subtype: 'ids_ips', label: 'IDS / IPS', icon: ShieldAlert, color: 'text-red-400', bg: 'bg-red-500/8', border: 'border-red-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Snort / Suricata · Inline', os: 'Suricata on Ubuntu' },
+            { type: 'firewall', subtype: 'vpn_gw', label: 'VPN Gateway', icon: Key, color: 'text-red-400', bg: 'bg-red-500/8', border: 'border-red-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'IPSec / WireGuard · VPN', os: 'pfSense / Cisco ASA' },
+            { type: 'siem', subtype: 'wazuh', label: 'Wazuh SIEM', icon: BarChart3, color: 'text-purple-400', bg: 'bg-purple-500/8', border: 'border-purple-500/15', riskBadge: 'OPS', badgeColor: 'bg-white/10 text-white/50', desc: 'Open-source SIEM · Agents', os: 'Ubuntu 22.04 LTS' },
+            { type: 'siem', subtype: 'qradar', label: 'IBM QRadar', icon: BarChart3, color: 'text-purple-400', bg: 'bg-purple-500/8', border: 'border-purple-500/15', riskBadge: 'OPS', badgeColor: 'bg-white/10 text-white/50', desc: 'MSSP-grade SIEM & SOAR', os: 'RHEL 8 (Appliance)' },
+            { type: 'siem', subtype: 'splunk', label: 'Splunk', icon: BarChart3, color: 'text-purple-400', bg: 'bg-purple-500/8', border: 'border-purple-500/15', riskBadge: 'OPS', badgeColor: 'bg-white/10 text-white/50', desc: 'Splunk Enterprise · Log SIEM', os: 'Splunk on Linux' },
+        ]
+    },
+    {
+        label: 'Threat Actors',
+        children: [
+            { type: 'attacker', subtype: 'kali', label: 'Kali Linux', icon: ShieldAlert, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Full pentesting distro · Metasploit', os: 'Kali Linux 2024.1' },
+            { type: 'attacker', subtype: 'parrot', label: 'Parrot OS', icon: ShieldAlert, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Security / Privacy Linux distro', os: 'Parrot Security 6.x' },
+            { type: 'attacker', subtype: 'c2_server', label: 'C2 Server', icon: Terminal, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Command & Control · Cobalt Strike / Havoc', os: 'Debian (Cloud VPS)' },
+            { type: 'attacker', subtype: 'pivot_host', label: 'Pivot Host', icon: Globe, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Compromised internal pivot node', os: 'Any compromised host' },
+        ]
+    },
+];
+
+// Sub-net mask auto-calculator
+function calcSubnetMask(ip: string): string {
+    if (!ip) return '';
+    const firstOctet = parseInt(ip.split('.')[0]);
+    if (firstOctet >= 1 && firstOctet <= 126) return '255.0.0.0';       // Class A
+    if (firstOctet >= 128 && firstOctet <= 191) return '255.255.0.0';    // Class B
+    if (firstOctet >= 192 && firstOctet <= 223) return '255.255.255.0';  // Class C
+    return '255.255.255.0'; // Default
+}
+
+// Collapsible category component for sidebar
+function ComponentCategory({ label, items, onDragStart }: { label: string; items: typeof COMPONENT_TREE[0]['children']; onDragStart: (e: React.DragEvent, type: string, label: string, subtype?: string) => void }) {
+    const [open, setOpen] = useState(true);
+    return (
+        <div>
+            <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 mb-2 px-1 group">
+                <div className="h-px flex-1 bg-white/8" />
+                <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 font-bold group-hover:text-white/40 transition-colors">{label}</span>
+                <span className={`text-white/20 text-[8px] transition-transform duration-200 ${open ? 'rotate-90' : ''}`}>▶</span>
+                <div className="h-px flex-1 bg-white/8" />
+            </button>
+            {open && (
+                <div className="space-y-1 mb-3">
+                    {items.map(({ type, subtype, label: itemLabel, icon: Icon, color, bg, border, riskBadge, badgeColor, desc, os }) => (
+                        <div
+                            key={`${type}-${subtype}`}
+                            onDragStart={(e) => onDragStart(e, type, itemLabel, subtype)} draggable
+                            className={`group ${bg} ${border} border rounded-xl p-2.5 cursor-grab active:cursor-grabbing hover:bg-white/8 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg relative overflow-hidden`}
+                        >
+                            <div className="flex items-center gap-2.5">
+                                <div className="p-1.5 rounded-lg bg-black/30 flex-shrink-0">
+                                    <Icon className={`h-3.5 w-3.5 ${color}`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between gap-1">
+                                        <span className="text-[11px] font-semibold text-white/90 leading-tight truncate">{itemLabel}</span>
+                                        <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${badgeColor} uppercase tracking-wider flex-shrink-0`}>{riskBadge}</span>
+                                    </div>
+                                    <p className="text-[9px] text-white/30 mt-0.5 truncate">{desc}</p>
+                                    <p className="text-[8px] text-white/15 mt-0.5 truncate font-mono">{os}</p>
+                                </div>
+                            </div>
+                            <div className="absolute right-1.5 bottom-1.5 opacity-0 group-hover:opacity-30 transition-opacity">
+                                <span className="text-[7px] text-white/50">drag →</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 
 function ArchitectContent() {
     const searchParams = useSearchParams();
@@ -179,6 +415,15 @@ function ArchitectContent() {
         message: string;
         resources: { componentId: string; awsService: string; resourceId: string; status: string; details: string; }[]
     } | null>(null);
+
+    // Attack Scenario Panel state
+    const [showAttackPanel, setShowAttackPanel] = useState(false);
+    const [runningScenario, setRunningScenario] = useState<AttackScenario | null>(null);
+    const [scenarioStep, setScenarioStep] = useState(0);
+    const [scenarioComplete, setScenarioComplete] = useState(false);
+    const [scenarioLog, setScenarioLog] = useState<{ step: string; detail: string }[]>([]);
+    const [attackedNodes, setAttackedNodes] = useState<string[]>([]);
+    const attackTimerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
 
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
@@ -270,6 +515,131 @@ function ArchitectContent() {
             setIsDeploying(false);
         }
     };
+
+    const runAttackScenario = useCallback((scenario: AttackScenario) => {
+        // Clear previous scenario & timers
+        attackTimerRefs.current.forEach(t => clearTimeout(t));
+        attackTimerRefs.current = [];
+
+        setRunningScenario(scenario);
+        setScenarioStep(0);
+        setScenarioComplete(false);
+        setScenarioLog([]);
+        setAttackedNodes([]);
+
+        // Reset any previously highlighted nodes
+        setNodes(nds => nds.map(n => ({
+            ...n,
+            style: { ...n.style, border: (n.data as any).__originalBorder || n.style?.border, boxShadow: (n.data as any).__originalGlow || n.style?.boxShadow, background: (n.data as any).__originalBg || n.style?.background, transition: 'all 0.4s ease' }
+        })));
+
+        // Find target nodes matching the scenario's target types
+        const targets = nodes.filter(n => scenario.targetTypes.includes((n.data as any).componentType));
+        const attackerNode = nodes.find(n => (n.data as any).componentType === 'attacker');
+        const sequence = attackerNode ? [attackerNode, ...targets] : targets;
+
+        // Config-aware realistic kill chain detail generator
+        const generateStepDetail = (phaseIdx: number, baseDetail: string): string => {
+            const targetNode = sequence[phaseIdx];
+            if (!targetNode) return baseDetail;
+            const d = targetNode.data as any;
+            const ip = d.ipAddress || 'unknown';
+            const subnet = d.subnetMask || 'unknown';
+            const os = d.os || d.osVersion || d.osFamily || 'unknown OS';
+            const webSvc = d.webService && d.webService !== 'None' ? d.webService : '';
+            const dbSvc = d.dbService && d.dbService !== 'None' ? d.dbService : '';
+            const label = (d.label as string) || d.componentType || 'target';
+            const gw = d.defaultGateway || 'router';
+
+            switch (scenario.id) {
+                case 'sqli':
+                    if (phaseIdx === 0) return `Scanning ${ip} [${label}] — OS fingerprint: ${os}. ${webSvc ? webSvc + ' detected.' : ''} Looking for SQL error signatures in HTTP responses.`;
+                    if (phaseIdx === 1) return `Payload sent: POST /login to ${ip}\nBody: username=admin'--&password=x\n→ SQL error exposed. ${dbSvc || 'DB'} backend confirmed.`;
+                    if (phaseIdx === 2) return `Auth bypass on ${label} (${ip}). UNION SELECT dumped admin row from ${dbSvc || 'database'}. Session token extracted.`;
+                    if (phaseIdx === 3) return `INFORMATION_SCHEMA enumerated. Subnet ${subnet} pivoted. 47k+ records streamed to C2 via HTTPS.`;
+                    break;
+                case 'broken_auth':
+                    if (phaseIdx === 0) return `Credential spray against ${label} (${ip}, ${os}). rockyou.txt wordlist. No rate-limit on ${webSvc || 'login endpoint'}.`;
+                    if (phaseIdx === 1) return `JWT secret cracked on ${label}. Forged: {sub:admin,role:superuser,iat:${Math.floor(Date.now() / 1000)}}. ${os} auth bypassed.`;
+                    if (phaseIdx === 2) return `IDOR at ${ip}/api/users/1/role → admin. ${os} RBAC not server-enforced.`;
+                    if (phaseIdx === 3) return `SSH key injected to /root/.ssh/authorized_keys on ${label} (${ip}). Persistent root access established.`;
+                    break;
+                case 'data_exfil':
+                    if (phaseIdx === 0) return `Beacon deployed on ${label} (${ip}, ${os}). 30s C2 heartbeat over HTTPS. DNS: ${d.dnsServers || '8.8.8.8'}.`;
+                    if (phaseIdx === 1) return `Enumerated ${ip} [subnet: ${subnet}]:\n/etc/shadow, /home/*/.ssh, ${dbSvc ? dbSvc + ' dumps,' : ''} PII CSV exports — all found.`;
+                    if (phaseIdx === 2) return `Archiving on ${label} (${os}). AES-256-CBC encrypted, split into 1MB chunks in /tmp/.cache/.sys.`;
+                    if (phaseIdx === 3) return `Exfil via DNS TXT from ${ip}. 2.3GB out before IDS alert. Logs cleared on ${label}.`;
+                    break;
+                case 'mitm':
+                    if (phaseIdx === 0) return `ARP poisoning on ${ip} [subnet ${subnet}]. Gateway ${gw} MAC remapped to attacker. All L2 traffic captured.`;
+                    if (phaseIdx === 1) return `${label} (${ip}) traffic intercepted. Cleartext ${webSvc || 'HTTP'} POST data visible. Session cookies captured.`;
+                    if (phaseIdx === 2) return `SSL strip active. ${label} forced to plain HTTP. ${os} browser shows no HTTPS warning. Creds in plaintext.`;
+                    if (phaseIdx === 3) return `XSS injected into ${ip} HTTP response. document.cookie exfil to C2. Session theft complete.`;
+                    break;
+                case 'ransomware':
+                    if (phaseIdx === 0) return `Phishing macro executed on ${label} (${ip}, ${os}). PowerShell dropper runs. ${webSvc || 'SMB'} share accessible via subnet ${subnet}.`;
+                    if (phaseIdx === 1) return `EternalBlue worm on ${ip} port 445. Spreading to: ${targets.slice(0, 3).map(n => (n.data as any).ipAddress || n.id).join(', ')}.`;
+                    if (phaseIdx === 2) return `Encrypting ${label} (${ip}): *.doc *.xls *.db *.sql *.bak → .locked. RSA-4096 per-host key generated.`;
+                    if (phaseIdx === 3) return `README_DECRYPT.txt on ${ip}:\n"Files encrypted. Send $450k BTC to 1A2...9.\n72-hour deadline."`;
+                    break;
+                case 'priv_esc':
+                    if (phaseIdx === 0) return `Low-priv RCE on ${label} (${ip}, ${os}) via ${webSvc || 'web service'}. Shell user: www-data (UID 33). Subnet ${subnet} visible.`;
+                    if (phaseIdx === 1) return `SUID scan on ${ip}: /usr/bin/perl found (SUID set). Dirty COW (CVE-2016-5195) applicable to ${os}.`;
+                    if (phaseIdx === 2) return `Dirty COW compiled in-memory on ${ip}. Race triggered. /etc/passwd overwritten. Root shell obtained on ${label}.`;
+                    if (phaseIdx === 3) return `# id → uid=0(root) on ${label} (${ip}, ${os}). Backdoor user added. /etc/shadow dumped. Pivoting to ${subnet}.`;
+                    break;
+                default:
+                    return baseDetail;
+            }
+            return baseDetail;
+        };
+
+        // Animate each kill chain step
+        scenario.killChain.forEach((phase, phaseIdx) => {
+            const t = setTimeout(() => {
+                setScenarioStep(phaseIdx);
+                setScenarioLog(prev => [...prev, { step: phase.step, detail: generateStepDetail(phaseIdx, phase.detail) }]);
+
+                // Highlight the next node in succession
+                if (sequence[phaseIdx]) {
+                    const nodeId = sequence[phaseIdx].id;
+                    setAttackedNodes(prev => [...prev, nodeId]);
+                    setNodes(nds => nds.map(n => n.id === nodeId ? {
+                        ...n,
+                        style: {
+                            ...n.style,
+                            border: `2px solid ${scenario.color}`,
+                            boxShadow: `0 0 30px ${scenario.glow}, 0 0 60px ${scenario.glow.replace('0.7', '0.2')}`,
+                            background: scenario.bg,
+                            transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)'
+                        }
+                    } : n));
+                }
+            }, phase.delay);
+            attackTimerRefs.current.push(t);
+        });
+
+        // Final: mark complete
+        const lastDelay = scenario.killChain[scenario.killChain.length - 1].delay + 1800;
+        const finalTimer = setTimeout(() => {
+            setScenarioComplete(true);
+        }, lastDelay);
+        attackTimerRefs.current.push(finalTimer);
+    }, [nodes, setNodes]);
+
+    const stopAttackScenario = useCallback(() => {
+        attackTimerRefs.current.forEach(t => clearTimeout(t));
+        attackTimerRefs.current = [];
+        setRunningScenario(null);
+        setScenarioComplete(false);
+        setScenarioLog([]);
+        setAttackedNodes([]);
+        // Reset node styles
+        setNodes(nds => nds.map(n => ({
+            ...n,
+            style: { ...n.style, border: (n.data as any).__originalBorder || n.style?.border, boxShadow: (n.data as any).__originalGlow || n.style?.boxShadow, background: (n.data as any).__originalBg || n.style?.background, transition: 'all 0.4s ease' }
+        })));
+    }, [setNodes]);
 
     const handleSyncDns = async () => {
         setSimulationError(null);
@@ -452,7 +822,12 @@ function ArchitectContent() {
     const updateNodeData = useCallback((key: string, value: any) => {
         if (!selectedNode) return;
 
-        const newData = { ...selectedNode.data, [key]: value };
+        let newData = { ...selectedNode.data, [key]: value };
+
+        // Auto-calculate subnet mask when IP address changes
+        if (key === 'ipAddress' && typeof value === 'string') {
+            newData.subnetMask = calcSubnetMask(value);
+        }
 
         setNodes((nds) =>
             nds.map((node) => {
@@ -571,6 +946,7 @@ function ArchitectContent() {
 
             const type = event.dataTransfer.getData('application/reactflow');
             const label = event.dataTransfer.getData('application/label');
+            const subtype = event.dataTransfer.getData('application/subtype') || '';
 
             if (typeof type === 'undefined' || !type) {
                 return;
@@ -601,6 +977,17 @@ function ArchitectContent() {
             const colors = nodeColorMap[type] || { bg: '#111', border: '#444', glow: 'rgba(255,255,255,0.1)' };
             const nodeId = `${type}-${Date.now()}`;
 
+            // Default IP per network class based on type
+            const defaultIpMap: Record<string, string> = {
+                server: '192.168.1.10', vps: '10.0.1.5', node: '192.168.1.50',
+                router: '192.168.1.1', switch: '192.168.1.2', firewall: '192.168.1.254',
+                cdn: '203.0.113.10', siem: '10.0.0.100', attacker: '10.10.10.1'
+            };
+            const defaultIp = defaultIpMap[type] || '192.168.1.100';
+
+            // OS & services pre-fill from COMPONENT_TREE
+            const treeEntry = COMPONENT_TREE.flatMap(c => c.children).find(c => c.subtype === subtype);
+
             const newNode: Node = {
                 id: nodeId,
                 type: "default",
@@ -608,6 +995,11 @@ function ArchitectContent() {
                 data: {
                     label,
                     componentType: type,
+                    subtype,
+                    os: treeEntry?.os || '',
+                    ipAddress: defaultIp,
+                    subnetMask: calcSubnetMask(defaultIp),
+                    defaultGateway: defaultIp.replace(/\.\d+$/, '.1'),
                     networkConfig: {},
                     securityConfig: {},
                     availabilityConfig: {},
@@ -634,9 +1026,10 @@ function ArchitectContent() {
         [setNodes]
     );
 
-    const onDragStart = (event: React.DragEvent, nodeType: string, label: string) => {
+    const onDragStart = (event: React.DragEvent, nodeType: string, label: string, subtype?: string) => {
         event.dataTransfer.setData('application/reactflow', nodeType);
         event.dataTransfer.setData('application/label', label);
+        event.dataTransfer.setData('application/subtype', subtype || '');
         event.dataTransfer.effectAllowed = 'move';
     };
 
@@ -677,75 +1070,9 @@ function ArchitectContent() {
                 {/* Component List */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
 
-                    {/* Render each category */}
-                    {([
-                        {
-                            label: 'Compute & VMs',
-                            items: [
-                                { type: 'server', label: 'Web/App Server', icon: Server, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Minutely configurable Server' },
-                                { type: 'vps', label: 'VPS Instance', icon: Cpu, color: 'text-indigo-400', bg: 'bg-indigo-500/8', border: 'border-indigo-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Virtual Private Server' },
-                            ]
-                        },
-                        {
-                            label: 'Network Core',
-                            items: [
-                                { type: 'router', label: 'Router', icon: Activity, color: 'text-orange-400', bg: 'bg-orange-500/8', border: 'border-orange-500/15', riskBadge: 'GATE', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Layer 3 Routing Engine' },
-                                { type: 'switch', label: 'Network Switch', icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/8', border: 'border-emerald-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Layer 2 Packet Switching' },
-                                { type: 'cdn', label: 'CDN Edge', icon: Cloud, color: 'text-cyan-400', bg: 'bg-cyan-500/8', border: 'border-cyan-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Content Delivery Network' },
-                            ]
-                        },
-                        {
-                            label: 'Endpoints & Nodes',
-                            items: [
-                                { type: 'node', label: 'Endpoint Node', icon: Database, color: 'text-blue-400', bg: 'bg-blue-500/8', border: 'border-blue-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Win/Linux Workstation' },
-                            ]
-                        },
-                        {
-                            label: 'Security & Ops',
-                            items: [
-                                { type: 'firewall', label: 'Firewall', icon: Shield, color: 'text-red-400', bg: 'bg-red-500/8', border: 'border-red-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Stateful/Stateless FW' },
-                                { type: 'siem', label: 'SIEM Server', icon: BarChart3, color: 'text-purple-400', bg: 'bg-purple-500/8', border: 'border-purple-500/15', riskBadge: 'OPS', badgeColor: 'bg-white/10 text-white/50', desc: 'Wazuh, QRadar, Splunk' },
-                            ]
-                        },
-                        {
-                            label: 'Threat Actors',
-                            items: [
-                                { type: 'attacker', label: 'Attacker Machine', icon: ShieldAlert, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Kali Linux / Pivot Node' },
-                            ]
-                        },
-                    ] as const).map(({ label, items }) => (
-                        <div key={label}>
-                            <div className="flex items-center gap-2 mb-2 px-1">
-                                <div className="h-px flex-1 bg-white/8" />
-                                <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 font-bold">{label}</span>
-                                <div className="h-px flex-1 bg-white/8" />
-                            </div>
-                            <div className="space-y-1.5">
-                                {items.map(({ type, label: itemLabel, icon: Icon, color, bg, border, riskBadge, badgeColor, desc }) => (
-                                    <div
-                                        key={type}
-                                        onDragStart={(e) => onDragStart(e, type, itemLabel)} draggable
-                                        className={`group ${bg} ${border} border rounded-xl p-3 cursor-grab active:cursor-grabbing hover:bg-white/8 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg relative overflow-hidden`}
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <div className="p-1.5 rounded-lg bg-black/30">
-                                                <Icon className={`h-4 w-4 ${color}`} />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-xs font-semibold text-white/90">{itemLabel}</span>
-                                                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${badgeColor} uppercase tracking-wider`}>{riskBadge}</span>
-                                                </div>
-                                                <p className="text-[10px] text-white/30 mt-0.5 truncate">{desc}</p>
-                                            </div>
-                                        </div>
-                                        <div className="absolute right-2 bottom-2 opacity-0 group-hover:opacity-40 transition-opacity">
-                                            <span className="text-[8px] text-white/50">drag →</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                    {/* Render each category with child components */}
+                    {COMPONENT_TREE.map(({ label, children }) => (
+                        <ComponentCategory key={label} label={label} items={children} onDragStart={onDragStart} />
                     ))}
 
                     {/* Tips card */}
@@ -794,6 +1121,14 @@ function ArchitectContent() {
                     >
                         <Globe className={`h-3.5 w-3.5 mr-2 text-cyan-400 ${isSyncingDns ? 'animate-spin' : ''}`} />
                         {isSyncingDns ? 'Syncing Telemetry...' : 'Sync AWS Route 53 Telemetry'}
+                    </button>
+
+                    <button
+                        onClick={() => setShowAttackPanel(v => !v)}
+                        className={`w-full border py-2.5 rounded-xl font-medium text-xs flex items-center justify-center transition-all duration-200 group ${showAttackPanel ? 'bg-rose-900/40 border-rose-500/50 text-rose-300' : 'bg-rose-950/20 hover:bg-rose-900/30 border-rose-500/20 hover:border-rose-500/40 text-rose-400 hover:text-rose-300'}`}
+                    >
+                        <ShieldAlert className={`h-3.5 w-3.5 mr-2 ${showAttackPanel ? 'text-rose-300 animate-pulse' : 'text-rose-400'}`} />
+                        {showAttackPanel ? 'Hide Attack Simulator' : '⚡ Attack Scenarios'}
                     </button>
 
                     {/* Error Banner */}
@@ -864,6 +1199,131 @@ function ArchitectContent() {
                             </div>
                             <p className="text-white/20 text-sm font-mono tracking-widest uppercase">Drop components to begin</p>
                             <p className="text-white/10 text-xs mt-2">Drag from the left panel onto the canvas</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Attack Scenario Simulator Panel */}
+                {showAttackPanel && (
+                    <div className="absolute bottom-20 right-4 w-96 z-40 animate-in slide-in-from-bottom-8 fade-in duration-300 pointer-events-auto">
+                        <div className="bg-black/92 backdrop-blur-2xl border border-rose-500/20 rounded-2xl shadow-[0_0_60px_rgba(244,63,94,0.12)] overflow-hidden">
+                            {/* Header */}
+                            <div className="p-4 border-b border-white/5 bg-gradient-to-r from-rose-950/50 to-transparent flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 bg-rose-500/10 border border-rose-500/20 rounded-lg">
+                                        <ShieldAlert className="h-4 w-4 text-rose-400 animate-pulse" />
+                                    </div>
+                                    <div>
+                                        <div className="text-sm font-bold text-white tracking-tight">Attack Scenario Lab</div>
+                                        <div className="text-[10px] text-white/30 font-mono">MITRE ATT&amp;CK Visualization Engine</div>
+                                    </div>
+                                </div>
+                                <button onClick={() => setShowAttackPanel(false)} className="text-white/30 hover:text-white/80 text-lg leading-none transition-colors">✕</button>
+                            </div>
+
+                            {/* Scenario Picker Grid */}
+                            {!runningScenario && (
+                                <div className="p-4">
+                                    <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] font-bold mb-3">Select Attack Vector</div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {ATTACK_SCENARIOS.map(scenario => (
+                                            <button
+                                                key={scenario.id}
+                                                onClick={() => runAttackScenario(scenario)}
+                                                className="group flex flex-col gap-1.5 bg-black/40 border border-white/5 hover:border-white/20 rounded-xl p-3 text-left transition-all duration-200 hover:scale-[1.02]"
+                                                style={{ '--glow-color': scenario.glow } as React.CSSProperties}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-2xl leading-none">{scenario.icon}</span>
+                                                    <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border" style={{ color: scenario.color, borderColor: `${scenario.color}40`, backgroundColor: `${scenario.color}10` }}>
+                                                        {scenario.mitreId}
+                                                    </span>
+                                                </div>
+                                                <div className="text-xs font-bold text-white/90 group-hover:text-white transition-colors leading-tight">{scenario.label}</div>
+                                                <div className="text-[9px] text-white/30 leading-relaxed line-clamp-2 group-hover:text-white/50 transition-colors">{scenario.description}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="mt-3 text-[9px] text-white/20 text-center">
+                                        Drag an <span className="text-rose-400/60">Attacker Machine</span> onto the canvas, then select a scenario to visualize
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Live Simulation Log */}
+                            {runningScenario && (
+                                <div className="p-4">
+                                    {/* Active scenario header */}
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xl">{runningScenario.icon}</span>
+                                            <div>
+                                                <div className="text-sm font-bold" style={{ color: runningScenario.color }}>{runningScenario.label}</div>
+                                                <div className="text-[9px] text-white/30 font-mono">{runningScenario.mitreId} · {runningScenario.mitreTactic}</div>
+                                            </div>
+                                        </div>
+                                        {!scenarioComplete ? (
+                                            <div className="flex items-center gap-1.5 text-[9px] text-white/40">
+                                                <div className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ backgroundColor: runningScenario.color }} />
+                                                RUNNING...
+                                            </div>
+                                        ) : (
+                                            <span className="text-[9px] text-rose-400 font-bold uppercase tracking-wider bg-rose-950/50 px-2 py-1 rounded border border-rose-500/30">⚠ Breach Complete</span>
+                                        )}
+                                    </div>
+
+                                    {/* Progress bar */}
+                                    <div className="h-1 bg-white/5 rounded-full mb-4 overflow-hidden">
+                                        <div
+                                            className="h-full rounded-full transition-all duration-700"
+                                            style={{
+                                                width: `${((scenarioStep + 1) / runningScenario.killChain.length) * 100}%`,
+                                                backgroundColor: runningScenario.color,
+                                                boxShadow: `0 0 10px ${runningScenario.glow}`
+                                            }}
+                                        />
+                                    </div>
+
+                                    {/* Kill chain log - live updates */}
+                                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
+                                        {scenarioLog.map((entry, i) => (
+                                            <div key={i} className="flex gap-3 animate-in slide-in-from-left-4 fade-in duration-400">
+                                                <div className="flex-shrink-0 mt-1 w-4 h-4 rounded flex items-center justify-center" style={{ backgroundColor: `${runningScenario.color}20`, border: `1px solid ${runningScenario.color}40` }}>
+                                                    <span className="text-[8px] font-bold" style={{ color: runningScenario.color }}>{i + 1}</span>
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs font-bold text-white/90 mb-0.5">{entry.step}</div>
+                                                    <div className="text-[9px] text-white/40 leading-relaxed font-mono">{entry.detail}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {!scenarioComplete && (
+                                            <div className="flex items-center gap-2 text-[9px] text-white/20 pl-7 font-mono">
+                                                <span className="animate-pulse">▋</span>&nbsp;Processing next phase...
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Action buttons */}
+                                    <div className="flex gap-2 mt-4">
+                                        <button
+                                            onClick={stopAttackScenario}
+                                            className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white text-xs font-bold py-2 rounded-lg transition-all"
+                                        >
+                                            ✕ Stop &amp; Clear
+                                        </button>
+                                        {scenarioComplete && (
+                                            <button
+                                                onClick={() => { stopAttackScenario(); }}
+                                                className="flex-1 text-xs font-bold py-2 rounded-lg border transition-all"
+                                                style={{ backgroundColor: `${runningScenario.color}15`, borderColor: `${runningScenario.color}40`, color: runningScenario.color }}
+                                            >
+                                                ↩ Try Another
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
