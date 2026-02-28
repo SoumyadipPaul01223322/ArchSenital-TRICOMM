@@ -56,7 +56,7 @@ function calculateBaseVulnerability(nodeData: any) {
         }
     }
 
-    if (nodeData.componentType === 'db') {
+    if (nodeData.componentType === 'db' || nodeData.componentType === 'database') {
         if (!nodeData.encryptionAtRest) {
             vulnerabilityScore += 15;
             localFindings.push({
@@ -78,6 +78,102 @@ function calculateBaseVulnerability(nodeData: any) {
                 mitreTechnique: "Indicator Removal on Host",
                 mitreId: "T1070",
                 complianceMappings: ["SOC2 CC7.2", "HIPAA 164.312(b)"]
+            });
+        }
+        if (nodeData.authMethod === 'Static Passwords') {
+            vulnerabilityScore += 15;
+            localFindings.push({
+                message: "Database relies on Static Passwords instead of IAM Roles or mutual TLS.",
+                severity: 'High',
+                mitreTactic: "Credential Access",
+                mitreTechnique: "Brute Force",
+                mitreId: "T1110",
+                complianceMappings: ["SOC2 CC6.1", "PCI-DSS 8.2"]
+            });
+        }
+        if (nodeData.exposure === 'Public Facing') {
+            vulnerabilityScore += 40;
+            localFindings.push({
+                message: "Database exposes public endpoint. Severe risk of direct data exfiltration.",
+                severity: 'Critical',
+                mitreTactic: "Initial Access",
+                mitreTechnique: "Exploit Public-Facing Application",
+                mitreId: "T1190",
+                complianceMappings: ["ISO 27001:A.13.1.1"]
+            });
+        }
+    }
+
+    // ── API / MICROSERVICE ───────────────────────────────────────────────────
+    if (nodeData.componentType === 'api') {
+        if (nodeData.exposure === 'Public Facing' && nodeData.authType === 'Unauthenticated (None)') {
+            vulnerabilityScore += 40;
+            localFindings.push({
+                message: "Unauthenticated API exposed to the internet. Allows direct abuse or data scraping.",
+                severity: 'Critical',
+                mitreTactic: "Initial Access",
+                mitreTechnique: "Exploit Public-Facing Application",
+                mitreId: "T1190",
+                complianceMappings: ["OWASP API2:2023", "PCI-DSS 6.5.10"]
+            });
+        }
+        if (nodeData.wafMode === 'Disabled') {
+            vulnerabilityScore += 15;
+            localFindings.push({
+                message: "API Gateway lacks WAF protection, vulnerable to injection and volumetric attacks.",
+                severity: 'High',
+                mitreTactic: "Defense Evasion",
+                mitreTechnique: "Impair Defenses",
+                mitreId: "T1562",
+                complianceMappings: ["OWASP API7:2023", "PCI-DSS 6.6"]
+            });
+        }
+        if (nodeData.inputValidation === false) {
+            vulnerabilityScore += 25;
+            localFindings.push({
+                message: "Strict schema/input validation is disabled. Vulnerable to SQLi / XSS / remote code execution.",
+                severity: 'Critical',
+                mitreTactic: "Execution",
+                mitreTechnique: "Command and Scripting Interpreter",
+                mitreId: "T1059",
+                complianceMappings: ["OWASP API8:2023"]
+            });
+        }
+    }
+
+    // ── IAM / IdP ────────────────────────────────────────────────────────────
+    if (nodeData.componentType === 'iam') {
+        if (nodeData.mfaRequired === false) {
+            vulnerabilityScore += 30;
+            localFindings.push({
+                message: "MFA not enforced at Identity Provider. High risk of credential stuffing and account takeover.",
+                severity: 'Critical',
+                mitreTactic: "Credential Access",
+                mitreTechnique: "Brute Force: Credential Stuffing",
+                mitreId: "T1110.004",
+                complianceMappings: ["NIST 800-63B", "SOC2 CC6.1"]
+            });
+        }
+        if (nodeData.passwordPolicy === 'Weak (No complexity constraints)') {
+            vulnerabilityScore += 20;
+            localFindings.push({
+                message: "Weak password policy enabled. Susceptible to dictionary attacks.",
+                severity: 'High',
+                mitreTactic: "Credential Access",
+                mitreTechnique: "Brute Force: Password Guessing",
+                mitreId: "T1110.001",
+                complianceMappings: ["PCI-DSS 8.2.3"]
+            });
+        }
+        if (nodeData.ssoEnabled === false) {
+            vulnerabilityScore += 10;
+            localFindings.push({
+                message: "SSO is disabled. Identity sprawl increases risk of orphaned accounts.",
+                severity: 'Medium',
+                mitreTactic: "Persistence",
+                mitreTechnique: "Valid Accounts: Cloud Accounts",
+                mitreId: "T1078.004",
+                complianceMappings: ["SOC2 CC6.3"]
             });
         }
     }

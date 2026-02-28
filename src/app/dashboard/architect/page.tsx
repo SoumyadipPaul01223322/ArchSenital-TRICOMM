@@ -264,6 +264,14 @@ const COMPONENT_TREE = [
         ]
     },
     {
+        label: 'Cloud & PaaS',
+        children: [
+            { type: 'database', subtype: 'db_cluster', label: 'Database Cluster', icon: Database, color: 'text-indigo-400', bg: 'bg-indigo-500/8', border: 'border-indigo-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Managed DB / RDS', os: 'PaaS' },
+            { type: 'api', subtype: 'api_gw', label: 'API Gateway', icon: Globe, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'API / Microservice', os: 'Serverless' },
+            { type: 'iam', subtype: 'idp', label: 'IAM / IdP', icon: Key, color: 'text-purple-400', bg: 'bg-purple-500/8', border: 'border-purple-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Identity Provider (Okta/AD)', os: 'SaaS' }
+        ]
+    },
+    {
         label: 'Network Core',
         children: [
             { type: 'router', subtype: 'core_router', label: 'Core Router', icon: Activity, color: 'text-orange-400', bg: 'bg-orange-500/8', border: 'border-orange-500/15', riskBadge: 'GATE', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Cisco / Juniper · BGP/OSPF', os: 'Cisco IOS XE' },
@@ -1581,7 +1589,56 @@ function ArchitectContent() {
                                         <Sec icon={Shield} title="Local Security">
                                             <Toggle field="localFirewall" label="Local Firewall (iptables/Windows FW)" defaultVal={true} />
                                             <Toggle field="sshEnabled" label="SSH / RDP Access" defaultVal={true} />
+                                            <Toggle field="mfaRequired" label="Require MFA for Access" defaultVal={false} />
+                                            <Toggle field="encryptionInTransit" label="Encryption in Transit (TLS)" defaultVal={true} />
                                             <Sel field="authMethod" label="Auth Method" options={['Password', 'Key-based (RSA/Ed25519)', 'Active Directory/LDAP']} defaultVal="Key-based (RSA/Ed25519)" />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── DATABASE CLUSTER ─────────────────────────
+                                    if (ct === 'database') return <div className="space-y-4">
+                                        <Sec icon={Database} title="Database Configuration">
+                                            <Sel field="dbService" label="Database Engine" options={['PostgreSQL', 'MySQL/MariaDB', 'MongoDB', 'Redis', 'MS SQL Server', 'Oracle DB']} defaultVal="PostgreSQL" />
+                                            <Sel field="exposure" label="Network Exposure" options={['Internal Only (VPC)', 'Public Facing']} defaultVal="Internal Only (VPC)" />
+                                        </Sec>
+                                        <Sec icon={ShieldAlert} title="Data Security & Encryption">
+                                            <Toggle field="encryptionAtRest" label="Encryption at Rest (AES-256)" defaultVal={true} />
+                                            <Toggle field="auditLoggingEnabled" label="Query-level Audit Logging" defaultVal={false} />
+                                        </Sec>
+                                        <Sec icon={Key} title="Authentication & Access">
+                                            <Sel field="authMethod" label="Auth Method" options={['Static Passwords', 'IAM Roles / Short-lived Tokens', 'Mutual TLS']} defaultVal="Static Passwords" />
+                                            <Toggle field="mfaRequired" label="MFA Required for Admins" defaultVal={false} />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── API / MICROSERVICE ───────────────────────
+                                    if (ct === 'api') return <div className="space-y-4">
+                                        <Sec icon={Globe} title="API Configuration">
+                                            <Sel field="exposure" label="Network Exposure" options={['Internal Service', 'Public Facing']} defaultVal="Public Facing" />
+                                            <Toggle field="encryptionInTransit" label="Enforce TLS 1.2+" defaultVal={true} />
+                                        </Sec>
+                                        <Sec icon={Shield} title="API Security">
+                                            <Toggle field="inputValidation" label="Strict Schema/Input Validation" defaultVal={true} />
+                                            <Sel field="wafMode" label="WAF / Rate Limiting" options={['Blocking', 'Monitoring', 'Disabled']} defaultVal="Blocking" />
+                                        </Sec>
+                                        <Sec icon={Key} title="Authentication (AuthN & AuthZ)">
+                                            <Sel field="authType" label="Authentication Type" options={['OAuth 2.0 / JWT', 'API Keys', 'Mutual TLS', 'Unauthenticated (None)']} defaultVal="OAuth 2.0 / JWT" />
+                                            <Toggle field="mfaRequired" label="MFA Supported/Enforced" defaultVal={true} />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── IAM / IdP ────────────────────────────────
+                                    if (ct === 'iam') return <div className="space-y-4">
+                                        <Sec icon={Key} title="Identity Provider">
+                                            <Sel field="iamService" label="Directory Service" options={['Active Directory', 'Okta / Auth0', 'AWS IAM / Cognito', 'Custom LDAP']} defaultVal="Okta / Auth0" />
+                                            <Toggle field="mfaRequired" label="Enforce MFA Globally" defaultVal={true} />
+                                        </Sec>
+                                        <Sec icon={ShieldAlert} title="Identity Policies">
+                                            <Sel field="passwordPolicy" label="Password Policy" options={['Strong (14+ char, complexity)', 'Standard (8+ char)', 'Weak (No complexity constraints)']} defaultVal="Strong (14+ char, complexity)" />
+                                            <Toggle field="ssoEnabled" label="Single Sign-On (SAML/OIDC)" defaultVal={true} />
                                         </Sec>
                                         <SensSlider />
                                     </div>;
