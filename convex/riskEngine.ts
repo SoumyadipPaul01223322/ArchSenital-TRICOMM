@@ -15,8 +15,8 @@ function calculateBaseVulnerability(nodeData: any) {
     let vulnerabilityScore = 0;
     let localFindings: FindingDetail[] = [];
 
-    // Network Vulnerabilities
-    if (nodeData.exposure === "Public") {
+    // Network Vulnerabilities — check both "Public" and "Public Facing" since config panel uses the latter
+    if (nodeData.exposure === "Public" || nodeData.exposure === "Public Facing") {
         vulnerabilityScore += 15;
         localFindings.push({
             message: "Component is publicly exposed to the internet.",
@@ -30,7 +30,7 @@ function calculateBaseVulnerability(nodeData: any) {
 
     // Security Vulnerabilities
     if (nodeData.componentType === 'api') {
-        if (nodeData.authType === "None") {
+        if (nodeData.authType === "None" || nodeData.authType === "Unauthenticated (None)") {
             vulnerabilityScore += 25;
             localFindings.push({
                 message: "Critical: API Endpoint lacks authentication.",
@@ -56,8 +56,8 @@ function calculateBaseVulnerability(nodeData: any) {
         }
     }
 
-    if (nodeData.componentType === 'db' || nodeData.componentType === 'database') {
-        if (!nodeData.encryptionAtRest) {
+    if (nodeData.componentType === 'db' || nodeData.componentType === 'database' || nodeData.subtype === 'db_cluster' || nodeData.subtype === 'db_server') {
+        if (nodeData.encryptionAtRest === false || nodeData.encryptionAtRest === undefined) {
             vulnerabilityScore += 15;
             localFindings.push({
                 message: "High: Database is missing Encryption at Rest.",
@@ -69,7 +69,7 @@ function calculateBaseVulnerability(nodeData: any) {
                 remediationCode: `resource "aws_db_instance" "secure_db" {\n  # ... other config\n  storage_encrypted = true\n  kms_key_id        = aws_kms_key.db_key.arn\n}`
             });
         }
-        if (!nodeData.auditLoggingEnabled) {
+        if (nodeData.auditLoggingEnabled === false || nodeData.auditLoggingEnabled === undefined) {
             vulnerabilityScore += 5;
             localFindings.push({
                 message: "Database audit logging is disabled.",
@@ -80,7 +80,7 @@ function calculateBaseVulnerability(nodeData: any) {
                 complianceMappings: ["SOC2 CC7.2", "HIPAA 164.312(b)"]
             });
         }
-        if (nodeData.authMethod === 'Static Passwords') {
+        if (nodeData.authMethod === 'Static Passwords' || (nodeData.componentType === 'database' && !nodeData.authMethod)) {
             vulnerabilityScore += 15;
             localFindings.push({
                 message: "Database relies on Static Passwords instead of IAM Roles or mutual TLS.",
@@ -91,7 +91,7 @@ function calculateBaseVulnerability(nodeData: any) {
                 complianceMappings: ["SOC2 CC6.1", "PCI-DSS 8.2"]
             });
         }
-        if (nodeData.exposure === 'Public Facing') {
+        if (nodeData.exposure === 'Public Facing' || nodeData.exposure === 'Public') {
             vulnerabilityScore += 40;
             localFindings.push({
                 message: "Database exposes public endpoint. Severe risk of direct data exfiltration.",
@@ -106,7 +106,7 @@ function calculateBaseVulnerability(nodeData: any) {
 
     // ── API / MICROSERVICE ───────────────────────────────────────────────────
     if (nodeData.componentType === 'api') {
-        if (nodeData.exposure === 'Public Facing' && nodeData.authType === 'Unauthenticated (None)') {
+        if ((nodeData.exposure === 'Public Facing' || nodeData.exposure === 'Public') && (nodeData.authType === 'Unauthenticated (None)' || nodeData.authType === 'None')) {
             vulnerabilityScore += 40;
             localFindings.push({
                 message: "Unauthenticated API exposed to the internet. Allows direct abuse or data scraping.",
@@ -178,7 +178,9 @@ function calculateBaseVulnerability(nodeData: any) {
         }
     }
 
-    if (nodeData.encryptionInTransit === false) {
+    // Check encryption in transit — only for component types where it's relevant
+    const encryptRelevantTypes = ['server', 'vps', 'api', 'database', 'db'];
+    if (encryptRelevantTypes.includes(nodeData.componentType) && nodeData.encryptionInTransit === false) {
         vulnerabilityScore += 15;
         localFindings.push({
             message: "Traffic to component is unencrypted (No TLS/HTTPS).",
@@ -231,7 +233,8 @@ function calculateBaseVulnerability(nodeData: any) {
 
     // ── SERVER / VPS ──────────────────────────────────────────────────────────
     if (nodeData.componentType === 'server' || nodeData.componentType === 'vps') {
-        if (nodeData.sshEnabled && nodeData.authMethod === 'Password') {
+        // SSH with password auth (sshEnabled defaults to true if undefined)
+        if (nodeData.sshEnabled !== false && nodeData.authMethod === 'Password') {
             vulnerabilityScore += 25;
             localFindings.push({
                 message: "Server allows SSH with Password authentication — highly vulnerable to brute forcing.",
@@ -253,7 +256,19 @@ function calculateBaseVulnerability(nodeData: any) {
                 complianceMappings: ["SOC2 CC6.6"]
             });
         }
-        if (nodeData.dbService && nodeData.dbService !== 'None' && nodeData.exposure === 'Public') {
+        // MFA not required on server
+        if (nodeData.mfaRequired === false || nodeData.mfaRequired === undefined) {
+            vulnerabilityScore += 10;
+            localFindings.push({
+                message: "Server does not enforce MFA for remote access — credential theft leads to direct compromise.",
+                severity: 'High',
+                mitreTactic: "Credential Access",
+                mitreTechnique: "Brute Force: Credential Stuffing",
+                mitreId: "T1110.004",
+                complianceMappings: ["NIST 800-63B", "SOC2 CC6.1"]
+            });
+        }
+        if (nodeData.dbService && nodeData.dbService !== 'None' && (nodeData.exposure === 'Public' || nodeData.exposure === 'Public Facing')) {
             vulnerabilityScore += 30;
             localFindings.push({
                 message: "Database service running directly on a public-facing server.",
@@ -290,6 +305,17 @@ function calculateBaseVulnerability(nodeData: any) {
                 complianceMappings: ["SOC2 CC6.1", "PCI-DSS 5.1"]
             });
         }
+        if (nodeData.edrAgent === false || nodeData.edrAgent === undefined) {
+            vulnerabilityScore += 10;
+            localFindings.push({
+                message: "No EDR agent deployed — advanced threats (fileless, Living-off-the-Land) will evade basic AV.",
+                severity: 'High',
+                mitreTactic: "Defense Evasion",
+                mitreTechnique: "Impair Defenses: Disable or Modify Tools",
+                mitreId: "T1562.001",
+                complianceMappings: ["SOC2 CC6.8", "CIS Control 10"]
+            });
+        }
     }
 
     // ── ROUTER / SWITCH ────────────────────────────────────────────────────────
@@ -314,6 +340,17 @@ function calculateBaseVulnerability(nodeData: any) {
                 mitreTechnique: "Network Sniffing",
                 mitreId: "T1040",
                 complianceMappings: ["PCI-DSS 4.1"]
+            });
+        }
+        if (nodeData.portSecurity === false || nodeData.portSecurity === undefined) {
+            vulnerabilityScore += 10;
+            localFindings.push({
+                message: "MAC Port Security disabled — allows unauthorized device connections and MAC flooding attacks.",
+                severity: 'Medium',
+                mitreTactic: "Initial Access",
+                mitreTechnique: "Hardware Additions",
+                mitreId: "T1200",
+                complianceMappings: ["CIS Network Devices", "ISO 27001:A.9.1.2"]
             });
         }
     }
@@ -448,7 +485,7 @@ function calculateBaseVulnerability(nodeData: any) {
 
     // ── CDN ────────────────────────────────────────────────────────────────
     if (nodeData.componentType === 'cdn') {
-        if (!nodeData.httpsOnly) {
+        if (nodeData.httpsOnly === false || nodeData.httpsOnly === undefined) {
             vulnerabilityScore += 12;
             localFindings.push({ message: "CDN allows HTTP — MITM downgrade attacks possible.", severity: 'High', mitreTactic: "Credential Access", mitreTechnique: "Adversary-in-the-Middle: HTTPS Spoofing", mitreId: "T1557.003", complianceMappings: ["PCI-DSS 4.1"] });
         }
@@ -572,6 +609,8 @@ export const simulateAttack = mutation({
 
         edges.forEach((edge: any) => {
             adjacencyList.get(edge.source)?.push(edge.target);
+            // Bidirectional — attackers can traverse connections in both directions
+            adjacencyList.get(edge.target)?.push(edge.source);
         });
 
         // 2. Pre-calculate Base Vulnerabilities per Node
@@ -587,13 +626,24 @@ export const simulateAttack = mutation({
         const compromised = new Set<string>();
         const visited = new Set<string>();
 
-        // Attackers start at Public/Internet exposed nodes
         // Attackers start at Public/Internet exposed nodes or explicit Attacker machines
+        // Check both "Public" and "Public Facing" since config panels use different values
         const entryPoints = nodes.filter((n: any) =>
             n.data.exposure === "Public" ||
+            n.data.exposure === "Public Facing" ||
+            n.data.exposure === "Internal Service" || // API nodes are reachable
             n.data.componentType === "internet" ||
-            n.data.componentType === "attacker"
+            n.data.componentType === "attacker" ||
+            n.data.componentType === "api" || // APIs are by definition externally reachable
+            n.data.componentType === "cdn" || // CDNs are edge/external
+            n.data.componentType === "router" // Routers are network entry points
         );
+
+        // If no explicit entry points, treat all nodes as potentially reachable
+        // (e.g., insider threat or physical access scenario)
+        if (entryPoints.length === 0 && nodes.length > 0) {
+            nodes.forEach((n: any) => entryPoints.push(n));
+        }
 
         function isCompromisable(currentNodeId: string, sourceNodeId: string | null) {
             const currentNode = nodeMap.get(currentNodeId);

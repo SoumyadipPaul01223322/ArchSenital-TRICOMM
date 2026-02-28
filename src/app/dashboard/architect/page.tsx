@@ -1038,6 +1038,67 @@ function ArchitectContent() {
             // OS & services pre-fill from COMPONENT_TREE
             const treeEntry = COMPONENT_TREE.flatMap(c => c.children).find(c => c.subtype === subtype);
 
+            // Realistic defaults per component type — these MUST match the config panel defaults
+            // so that the risk engine can evaluate them properly even before user interaction
+            const typeDefaults: Record<string, Record<string, any>> = {
+                server: {
+                    osFamily: 'Debian/Ubuntu Linux', osVersion: '', webService: 'Nginx', dbService: 'None',
+                    customPorts: '', dhcpEnabled: false, localFirewall: true, sshEnabled: true,
+                    mfaRequired: false, encryptionInTransit: true, authMethod: 'Key-based (RSA/Ed25519)',
+                    sensitivityLevel: 1, exposure: 'Private',
+                },
+                vps: {
+                    osFamily: 'Debian/Ubuntu Linux', osVersion: '', webService: 'Nginx', dbService: 'None',
+                    customPorts: '', dhcpEnabled: false, localFirewall: true, sshEnabled: true,
+                    mfaRequired: false, encryptionInTransit: true, authMethod: 'Key-based (RSA/Ed25519)',
+                    sensitivityLevel: 1, exposure: 'Private',
+                },
+                database: {
+                    dbService: 'PostgreSQL', exposure: 'Internal Only (VPC)', encryptionAtRest: true,
+                    auditLoggingEnabled: false, authMethod: 'Static Passwords', mfaRequired: false,
+                    sensitivityLevel: 1,
+                },
+                api: {
+                    exposure: 'Public Facing', encryptionInTransit: true, inputValidation: true,
+                    wafMode: 'Blocking', authType: 'OAuth 2.0 / JWT', mfaRequired: true,
+                    sensitivityLevel: 1,
+                },
+                iam: {
+                    iamService: 'Okta / Auth0', mfaRequired: true,
+                    passwordPolicy: 'Strong (14+ char, complexity)', ssoEnabled: true,
+                    sensitivityLevel: 1,
+                },
+                router: {
+                    deviceVendor: 'Cisco IOS', managementIp: '', routingProtocol: 'Static Only',
+                    stpEnabled: true, sshEnabled: true, portSecurity: false,
+                },
+                switch: {
+                    deviceVendor: 'Cisco IOS', managementIp: '', routingProtocol: 'Static Only',
+                    vlans: '', stpEnabled: true, sshEnabled: true, portSecurity: false,
+                },
+                node: {
+                    osFamily: 'Windows 11 Corporate', dhcpEnabled: true,
+                    antivirusEnabled: true, edrAgent: false, privilegeLevel: 'Standard User',
+                    sensitivityLevel: 1, exposure: 'Private',
+                },
+                firewall: {
+                    fwVendor: 'pfSense (FreeBSD)', wanIp: '', lanIp: '',
+                    defaultPolicy: 'Default Deny (Secure)', statefulInspection: true,
+                    natEnabled: true, whitelistedIPs: '', enableIDS: false, vpnServer: false,
+                },
+                cdn: {
+                    cdnVendor: 'Cloudflare', ddosProtection: true, wafEnabled: true,
+                    cacheHitRatio: '95%', httpsOnly: true,
+                },
+                siem: {
+                    siemVendor: 'Wazuh', ingestPorts: '514, 1514, 9200',
+                    tlsSyslog: true, logRetentionDays: 90,
+                },
+                attacker: { exposure: 'Public' },
+            };
+
+            const defaults = typeDefaults[type] || {};
+
             const newNode: Node = {
                 id: nodeId,
                 type: "default",
@@ -1050,6 +1111,7 @@ function ArchitectContent() {
                     ipAddress: defaultIp,
                     subnetMask: calcSubnetMask(defaultIp),
                     defaultGateway: defaultIp.replace(/\.\d+$/, '.1'),
+                    ...defaults,
                     networkConfig: {},
                     securityConfig: {},
                     availabilityConfig: {},
