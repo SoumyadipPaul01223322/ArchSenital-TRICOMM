@@ -924,21 +924,42 @@ function ArchitectContent() {
     // Financial Impact Estimation (IBM Cost of Data Breach model inspired)
     const financialImpact = (() => {
         if (!simulationResults) return null;
+
         const criticalCount = simulationResults.findings.filter((f: any) => f.severity === 'Critical').length;
         const highCount = simulationResults.findings.filter((f: any) => f.severity === 'High').length;
+
+        // Also factor in raw compromised nodes in case findings severity parsing misses items
+        const rawCompromisedCount = simulationResults.compromisedNodes.filter((id: string) => nodes.find(n => n.id === id)?.data?.componentType !== 'attacker').length;
+
+        const effectiveCriticals = Math.max(criticalCount, Math.floor(rawCompromisedCount * 0.4));
+        const effectiveHighs = Math.max(highCount, Math.ceil(rawCompromisedCount * 0.6));
+
         const publicNodes = nodes.filter(n => (n.data as any)?.exposure === 'Public').length;
         const sensitivity = nodes.reduce((max, n) => Math.max(max, parseInt((n.data as any)?.sensitivityLevel || '1')), 1);
 
         // Base: ₹1.2Cr per critical finding (inspired by IBM report INR conversion)
-        const baseCostCr = (criticalCount * 1.2) + (highCount * 0.4) + (publicNodes * 0.3) + (sensitivity * 0.2);
-        const low = Math.max(0.5, baseCostCr * 0.8);
-        const high = baseCostCr * 1.7;
-        const downtime = Math.round(criticalCount * 4 + highCount * 1.5);
+        const baseCostCr = (effectiveCriticals * 1.2) + (effectiveHighs * 0.4) + (publicNodes * 0.3) + (sensitivity * 0.2);
+
+        // Ensure at least some cost if compromised
+        const minCost = rawCompromisedCount > 0 ? 0.8 : 0;
+
+        const low = Math.max(minCost, baseCostCr * 0.8);
+        const high = Math.max(minCost * 1.5, baseCostCr * 1.7);
+
+        // Base downtime on effective counts so it always registers if compromised
+        const downtime = Math.round((effectiveCriticals * 6) + (effectiveHighs * 2.5) + (rawCompromisedCount * 1.5));
+
+        // Base records at risk on effective counts
+        let records = Math.round((effectiveCriticals * 85000) + (effectiveHighs * 15000) + (rawCompromisedCount * 5000));
+
+        // Cap records to a reasonable max based on sensitivity
+        if (records > 0) records = Math.max(records, 12500 * sensitivity);
+
         return {
             rangeLow: low.toFixed(1),
             rangeHigh: high.toFixed(1),
             downtimeHours: downtime,
-            recordsAtRisk: Math.round((criticalCount * 50000) + (highCount * 10000))
+            recordsAtRisk: records
         };
     })();
 
