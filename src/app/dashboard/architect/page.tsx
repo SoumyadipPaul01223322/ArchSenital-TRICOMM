@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -91,7 +91,7 @@ const initialEdges: Edge[] = [
     { id: "e3", source: "api", target: "db", style: { stroke: "#fff" } },
 ];
 
-export default function ArchitectPage() {
+function ArchitectContent() {
     const searchParams = useSearchParams();
     const projectId = searchParams.get("id");
     const { orgId } = useAuth();
@@ -518,5 +518,20 @@ export default function ArchitectPage() {
             </div>
 
         </div>
+    );
+}
+
+export default function ArchitectPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex h-[calc(100vh-8rem)] w-full items-center justify-center border border-white/10 rounded-xl bg-black shadow-2xl">
+                <div className="flex flex-col items-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500 mb-4"></div>
+                    <p className="text-white/50 text-sm">Loading architecture workspace...</p>
+                </div>
+            </div>
+        }>
+            <ArchitectContent />
+        </Suspense>
     );
 }
