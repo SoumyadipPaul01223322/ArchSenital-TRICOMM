@@ -315,40 +315,53 @@ function calcSubnetMask(ip: string): string {
     return '255.255.255.0'; // Default
 }
 
-// Collapsible category component for sidebar
+// Collapsible category component for sidebar — 2-column card grid
 function ComponentCategory({ label, items, onDragStart }: { label: string; items: typeof COMPONENT_TREE[0]['children']; onDragStart: (e: React.DragEvent, type: string, label: string, subtype?: string) => void }) {
     const [open, setOpen] = useState(true);
     return (
-        <div>
-            <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 mb-2 px-1 group">
-                <div className="h-px flex-1 bg-white/8" />
-                <span className="text-[9px] uppercase tracking-[0.2em] text-white/25 font-bold group-hover:text-white/40 transition-colors">{label}</span>
-                <span className={`text-white/20 text-[8px] transition-transform duration-200 ${open ? 'rotate-90' : ''}`}>▶</span>
-                <div className="h-px flex-1 bg-white/8" />
+        <div className="mb-1">
+            {/* Category header */}
+            <button
+                onClick={() => setOpen(v => !v)}
+                className="w-full flex items-center gap-2 py-2 px-2 rounded-lg hover:bg-white/4 group transition-colors mb-1"
+            >
+                <span className={`text-[7px] transition-transform duration-200 text-white/30 ${open ? 'rotate-90' : ''}`}>▶</span>
+                <span className="text-[10px] uppercase tracking-[0.18em] text-white/35 font-bold group-hover:text-white/55 transition-colors flex-1 text-left">{label}</span>
+                <span className="text-[9px] text-white/20 font-mono">{items.length}</span>
             </button>
+
             {open && (
-                <div className="space-y-1 mb-3">
+                <div className="grid grid-cols-2 gap-1.5 mb-3">
                     {items.map(({ type, subtype, label: itemLabel, icon: Icon, color, bg, border, riskBadge, badgeColor, desc, os }) => (
                         <div
                             key={`${type}-${subtype}`}
-                            onDragStart={(e) => onDragStart(e, type, itemLabel, subtype)} draggable
-                            className={`group ${bg} ${border} border rounded-xl p-2.5 cursor-grab active:cursor-grabbing hover:bg-white/8 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg relative overflow-hidden`}
+                            onDragStart={(e) => onDragStart(e, type, itemLabel, subtype)}
+                            draggable
+                            title={`${itemLabel} · ${os}\n${desc}\nDrag onto canvas`}
+                            className={`group relative ${bg} ${border} border rounded-xl p-3 cursor-grab active:cursor-grabbing transition-all duration-200 hover:scale-[1.03] hover:shadow-xl hover:border-white/20 overflow-hidden select-none`}
                         >
-                            <div className="flex items-center gap-2.5">
-                                <div className="p-1.5 rounded-lg bg-black/30 flex-shrink-0">
-                                    <Icon className={`h-3.5 w-3.5 ${color}`} />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center justify-between gap-1">
-                                        <span className="text-[11px] font-semibold text-white/90 leading-tight truncate">{itemLabel}</span>
-                                        <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${badgeColor} uppercase tracking-wider flex-shrink-0`}>{riskBadge}</span>
-                                    </div>
-                                    <p className="text-[9px] text-white/30 mt-0.5 truncate">{desc}</p>
-                                    <p className="text-[8px] text-white/15 mt-0.5 truncate font-mono">{os}</p>
-                                </div>
+                            {/* Accent glow on hover */}
+                            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none rounded-xl" style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.04) 0%, transparent 70%)' }} />
+
+                            {/* Icon area */}
+                            <div className={`inline-flex items-center justify-center w-9 h-9 rounded-xl bg-black/40 border border-white/6 mb-2.5 group-hover:border-white/15 transition-colors`}>
+                                <Icon className={`h-4 w-4 ${color}`} />
                             </div>
-                            <div className="absolute right-1.5 bottom-1.5 opacity-0 group-hover:opacity-30 transition-opacity">
-                                <span className="text-[7px] text-white/50">drag →</span>
+
+                            {/* Badge */}
+                            <div className="absolute top-2 right-2">
+                                <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded-md ${badgeColor} uppercase tracking-wider`}>{riskBadge}</span>
+                            </div>
+
+                            {/* Label */}
+                            <div className="text-[11px] font-bold text-white/90 leading-tight line-clamp-2 mb-1">{itemLabel}</div>
+
+                            {/* Description */}
+                            <div className="text-[9px] text-white/35 leading-relaxed line-clamp-2">{desc}</div>
+
+                            {/* Drag hint */}
+                            <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-60 transition-opacity">
+                                <span className="text-[7px] text-white/40 font-mono">drag ↗</span>
                             </div>
                         </div>
                     ))}
@@ -408,6 +421,7 @@ function ArchitectContent() {
 
     const [isReplaying, setIsReplaying] = useState(false);
     const [replayingNodes, setReplayingNodes] = useState<string[]>([]);
+    const [componentSearch, setComponentSearch] = useState('');
 
     const [isSyncingDns, setIsSyncingDns] = useState(false);
     const [deploymentResults, setDeploymentResults] = useState<{
@@ -1037,7 +1051,7 @@ function ArchitectContent() {
         <div className="flex h-[calc(100vh-8rem)] w-full border border-white/10 rounded-xl overflow-hidden shadow-2xl">
 
             {/* Premium Component Palette (Left Sidebar) */}
-            <div className="w-72 bg-[#080808] border-r border-white/8 flex flex-col h-full overflow-hidden">
+            <div className="w-80 bg-[#080808] border-r border-white/8 flex flex-col h-full overflow-hidden">
 
                 {/* Sidebar Header */}
                 <div className="p-4 border-b border-white/8 bg-gradient-to-b from-white/3 to-transparent">
@@ -1065,15 +1079,46 @@ function ArchitectContent() {
                             </div>
                         ))}
                     </div>
+
+                    {/* Search / filter */}
+                    <div className="relative mt-3">
+                        <input
+                            type="text"
+                            value={componentSearch}
+                            onChange={e => setComponentSearch(e.target.value)}
+                            placeholder="Search components..."
+                            className="w-full bg-white/5 border border-white/10 focus:border-cyan-500/50 rounded-xl px-3 py-2 text-xs text-white/80 placeholder-white/20 outline-none transition-colors font-mono"
+                        />
+                        {componentSearch && (
+                            <button
+                                onClick={() => setComponentSearch('')}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 text-xs transition-colors"
+                            >✕</button>
+                        )}
+                        {!componentSearch && (
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-white/15 text-[10px]">⌕</span>
+                        )}
+                    </div>
                 </div>
 
                 {/* Component List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
+                <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-3 space-y-1">
 
                     {/* Render each category with child components */}
-                    {COMPONENT_TREE.map(({ label, children }) => (
-                        <ComponentCategory key={label} label={label} items={children} onDragStart={onDragStart} />
-                    ))}
+                    {COMPONENT_TREE.map(({ label, children }) => {
+                        // Filter children by search query
+                        const q = componentSearch.toLowerCase();
+                        const filtered = q ? children.filter(c =>
+                            c.label.toLowerCase().includes(q) ||
+                            c.desc.toLowerCase().includes(q) ||
+                            c.os.toLowerCase().includes(q) ||
+                            c.type.toLowerCase().includes(q)
+                        ) : children;
+                        if (filtered.length === 0) return null;
+                        return (
+                            <ComponentCategory key={label} label={label} items={filtered} onDragStart={onDragStart} />
+                        );
+                    })}
 
                     {/* Tips card */}
                     <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-xl p-3">
