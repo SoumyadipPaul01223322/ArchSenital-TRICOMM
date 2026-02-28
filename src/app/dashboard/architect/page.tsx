@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useRef, createContext, useContext } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -18,12 +18,14 @@ import {
     Node,
     Edge,
     Connection,
-    OnNodesChange,
     OnEdgesChange,
+    OnNodesChange,
     OnConnect,
+    useOnSelectionChange,
+    ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Shield, Database, Globe, Server, Activity, Zap, ShieldAlert, Cpu, MessageSquare, Key, BarChart3, Trash2, Bot, Sparkles, Cloud, CheckCircle2, FileCheck } from "lucide-react";
+import { Shield, Database, Globe, Server, Activity, Zap, ShieldAlert, Cpu, MessageSquare, Key, BarChart3, Trash2, Bot, Sparkles, Cloud, CheckCircle2, FileCheck, Terminal } from "lucide-react";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Tooltip } from 'recharts';
 
 // Canvas starts empty — populated from Convex DB on load
@@ -43,6 +45,83 @@ function generateFallbackSummary(score: number, findings: any[]): string {
     return `EXECUTIVE SECURITY BRIEF — ${risk.toUpperCase()} RISK POSTURE\n\nDeploying this architecture in its current state poses a ${risk.toLowerCase()} operational risk to the organization. With an Exposure Index of ${score}/100, the system presents immediate vectors for unauthorized data access and service disruption. Financial modeling indicates potential breach costs in the range of ₹${costLow}–${costHigh} Crores, with estimated service downtime of ${downtime} hours.\n\nThe threat model identified ${criticals} critical and ${highs} high-severity exposures. Primary attack vectors trace to MITRE ATT&CK tactics including: ${mitreTactics || 'Initial Access, Lateral Movement'}. The DFS-based blast radius analysis confirms that ${findings.length > 0 ? 'multiple' : 'no'} components are reachable from the initial intrusion point, enabling lateral movement without trust boundary enforcement.\n\nImmediate remediation priorities: (1) Deploy WAFv2 and enforce JWT authentication on all API endpoints — this eliminates the highest-probability initial access vector. (2) Enable encryption at rest on all data stores with KMS key rotation. (3) Implement network segmentation and enforce Zero Trust lateral movement controls. The provided Terraform remediation artifacts in this report can be deployed to production within 2–4 hours.`;
 }
 
+// -- Configuration Context & Reusable Config Panel Form Components --
+const ConfigContext = createContext<{ d: any, updateNodeData: (k: string, v: any) => void }>({ d: {}, updateNodeData: () => { } });
+
+const Toggle = ({ field, label, defaultVal = false }: { field: string, label: string, defaultVal?: boolean }) => {
+    const { d, updateNodeData } = useContext(ConfigContext);
+    return (
+        <label className="flex items-center justify-between cursor-pointer group py-1.5">
+            <span className="text-sm text-white/70 flex-1 group-hover:text-white/90 transition-colors">{label}</span>
+            <div onClick={() => updateNodeData(field, !(d?.[field] ?? defaultVal))}
+                className={`relative w-9 h-5 rounded-full transition-all duration-200 cursor-pointer flex-shrink-0 ${(d?.[field] ?? defaultVal) ? 'bg-cyan-500' : 'bg-white/10'}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all duration-200 ${(d?.[field] ?? defaultVal) ? 'left-4' : 'left-0.5'}`} />
+            </div>
+        </label>
+    );
+};
+
+const Sel = ({ field, label, options, defaultVal = '' }: { field: string, label: string, options: string[], defaultVal?: string }) => {
+    const { d, updateNodeData } = useContext(ConfigContext);
+    return (
+        <div className="space-y-1">
+            <label className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">{label}</label>
+            <select value={d?.[field] ?? defaultVal} onChange={e => updateNodeData(field, e.target.value)}
+                className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors text-white">
+                {options.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+        </div>
+    );
+};
+
+const TxtInput = ({ field, label, placeholder = '' }: { field: string, label: string, placeholder?: string }) => {
+    const { d, updateNodeData } = useContext(ConfigContext);
+    return (
+        <div className="space-y-1">
+            <label className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">{label}</label>
+            <input type="text" value={d?.[field] ?? ''} onChange={e => updateNodeData(field, e.target.value)}
+                placeholder={placeholder}
+                className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors text-white placeholder:text-white/20" />
+        </div>
+    );
+};
+
+const NumInput = ({ field, label, min = 1, max = 1000, defaultVal = 1 }: { field: string, label: string, min?: number, max?: number, defaultVal?: number }) => {
+    const { d, updateNodeData } = useContext(ConfigContext);
+    return (
+        <div className="flex items-center justify-between py-0.5">
+            <label className="text-sm text-white/70">{label}</label>
+            <input type="number" min={min} max={max} value={d?.[field] ?? defaultVal} onChange={e => updateNodeData(field, parseInt(e.target.value))}
+                className="w-20 bg-black/50 border border-white/10 rounded-lg p-1.5 text-sm text-center focus:outline-none focus:border-cyan-500 text-white" />
+        </div>
+    );
+};
+
+const Sec = ({ icon: Icon, title, children }: { icon: any, title: string, children: React.ReactNode }) => (
+    <div className="space-y-2 pb-4 border-b border-white/6 last:border-b-0">
+        <h4 className="text-[10px] font-bold uppercase text-cyan-400 tracking-wider flex items-center pb-1">
+            <Icon className="h-3 w-3 mr-1.5" />{title}
+        </h4>
+        <div className="space-y-1">{children}</div>
+    </div>
+);
+
+const SensSlider = () => {
+    const { d, updateNodeData } = useContext(ConfigContext);
+    return (
+        <div className="py-1">
+            <div className="flex justify-between mb-1.5">
+                <label className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">Sensitivity Level</label>
+                <span className="text-xs text-cyan-400 font-bold bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded">{d?.sensitivityLevel ?? 1}/5</span>
+            </div>
+            <input type="range" min="1" max="5" step="1" value={d?.sensitivityLevel ?? 1} onChange={e => updateNodeData('sensitivityLevel', parseInt(e.target.value))}
+                className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
+            <div className="flex justify-between text-[9px] text-white/20 mt-1"><span>Low</span><span>Medium</span><span>Critical</span></div>
+        </div>
+    );
+};
+// ----------------------------------------------------------------------
+
 function ArchitectContent() {
     const searchParams = useSearchParams();
     const projectId = searchParams.get("id");
@@ -58,9 +137,27 @@ function ArchitectContent() {
     const provisionInfra = useAction(api.awsDeployment.provisionInfrastructure);
 
     const [nodes, setNodes] = useNodesState<Node>([]);
-    const [edges, setEdges] = useEdgesState<Edge>([]);
+    const [edges, setEdges] = useEdgesState<Edge>(initialEdges);
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+    const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
     const [isSimulating, setIsSimulating] = useState(false);
+    const [isDeploying, setIsDeploying] = useState(false);
+
+    // Automatically keep local selectedNodes state in sync, and smartly manage the single config panel
+    useOnSelectionChange({
+        onChange: ({ nodes }) => {
+            setSelectedNodes(nodes);
+
+            // If exactly one node is selected, show its deep config panel
+            if (nodes.length === 1) {
+                // Ensure the selection matches the latest state references
+                setSelectedNode(nodes[0]);
+            } else {
+                // If 0, or more than 1 are selected, hide the single-node config panel
+                setSelectedNode(null);
+            }
+        },
+    });
     const [simulationResults, setSimulationResults] = useState<{
         impactScore: number;
         compromisedNodes: string[];
@@ -70,11 +167,13 @@ function ArchitectContent() {
     const [isGeneratingAi, setIsGeneratingAi] = useState(false);
     const [zeroTrustMode, setZeroTrustMode] = useState(false);
     const [simulationError, setSimulationError] = useState<string | null>(null);
+    const [deletingNodeId, setDeletingNodeId] = useState<string | null>(null);
+    const [newNodeId, setNewNodeId] = useState<string | null>(null);
 
     const [isReplaying, setIsReplaying] = useState(false);
     const [replayingNodes, setReplayingNodes] = useState<string[]>([]);
 
-    const [isDeploying, setIsDeploying] = useState(false);
+    const [isSyncingDns, setIsSyncingDns] = useState(false);
     const [deploymentResults, setDeploymentResults] = useState<{
         success: boolean;
         message: string;
@@ -172,8 +271,86 @@ function ArchitectContent() {
         }
     };
 
+    const handleSyncDns = async () => {
+        setSimulationError(null);
+        setIsSyncingDns(true);
+        try {
+            const res = await fetch('/api/aws/dns');
+            const data = await res.json();
+
+            if (!data.success) {
+                throw new Error(data.error || "Failed to fetch DNS data");
+            }
+
+            let nodesAdded = 0;
+
+            // Generate nodes based on A records and Alias targets
+            const newNodes: Node[] = [];
+            data.dnsData.forEach((zone: any) => {
+                zone.records.forEach((record: any) => {
+                    const cleanName = record.name.replace(/\.$/, '');
+                    if (record.type === "A" || record.type === "CNAME" || record.aliasTarget) {
+                        const existingNode = nodes.find(n => n.data.label === cleanName);
+                        const alreadyAdded = newNodes.find(n => n.data.label === cleanName);
+
+                        if (!existingNode && !alreadyAdded) {
+                            const nodeId = `internet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                            newNodes.push({
+                                id: nodeId,
+                                type: "default",
+                                position: { x: 50 + (nodesAdded % 3) * 200, y: 50 + Math.floor(nodesAdded / 3) * 100 },
+                                data: {
+                                    componentType: 'internet',
+                                    label: cleanName,
+                                    networkConfig: {
+                                        exposure: 'public',
+                                        dnsRecordType: record.type,
+                                        ttl: record.ttl,
+                                        aliasTarget: record.aliasTarget,
+                                    },
+                                    securityConfig: {},
+                                    availabilityConfig: {},
+                                    dataConfig: {},
+                                },
+                                style: {
+                                    background: '#0d1117',
+                                    color: "#fff",
+                                    border: '1.5px solid #3b82f6',
+                                    borderRadius: "10px",
+                                    width: 160,
+                                    padding: 10,
+                                    boxShadow: '0 0 20px rgba(59,130,246,0.4), 0 4px 16px rgba(0,0,0,0.5)',
+                                    fontSize: '12px',
+                                    fontWeight: '500',
+                                    transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
+                                }
+                            });
+                            nodesAdded++;
+                        }
+                    }
+                });
+            });
+
+            if (newNodes.length > 0) {
+                setNodes(nds => [...nds, ...newNodes]);
+            } else {
+                setSimulationError("No newly exposed A records found in Route 53 telemetry.");
+            }
+
+        } catch (err: any) {
+            console.error("DNS Sync Error:", err);
+            setSimulationError(`DNS Telemetry Sync failed: ${err.message}`);
+        } finally {
+            setIsSyncingDns(false);
+        }
+    };
+
     const handleReplayBreach = useCallback(() => {
-        if (!simulationResults || simulationResults.compromisedNodes.length === 0) return;
+        if (!simulationResults) return;
+        const validComps = simulationResults.compromisedNodes.filter((id: string) =>
+            nodes.find(n => n.id === id)?.data?.componentType !== 'attacker'
+        );
+        if (validComps.length === 0) return;
 
         setIsReplaying(true);
         setReplayingNodes([]);
@@ -224,17 +401,53 @@ function ArchitectContent() {
     );
 
     const onConnect: OnConnect = useCallback(
-        (connection) => setEdges((eds) => addEdge({ ...connection, animated: true, style: { stroke: '#fff' } }, eds)),
+        (connection) => {
+            const newEdge = { ...connection, animated: true, style: { stroke: '#22d3ee', strokeWidth: 2 } };
+            setEdges((eds) => addEdge(newEdge, eds));
+        },
         [setEdges]
     );
 
     const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-        setSelectedNode(node);
+        // Selection is handled automatically by React Flow's selected property
+        // and our useOnSelectionChange hook monitors it.
     }, []);
 
     const onPaneClick = useCallback(() => {
-        setSelectedNode(null);
+        // Pane click clears selection natively in React Flow
     }, []);
+
+    // Smooth single-action deletion on Right Click (Context Menu)
+    const onNodeContextMenu = useCallback(
+        (event: React.MouseEvent, node: Node) => {
+            event.preventDefault(); // Prevent standard browser right-click menu
+
+            setDeletingNodeId(node.id);
+            setNodes((nds) => nds.map((n) =>
+                n.id === node.id
+                    ? { ...n, style: { ...n.style, border: '2px solid #ef4444', boxShadow: '0 0 30px rgba(239,68,68,0.7)', opacity: 0.5, transition: 'all 0.3s ease' } }
+                    : n
+            ));
+
+            setTimeout(() => {
+                setNodes((nds) => nds.filter((n) => n.id !== node.id));
+                setEdges((eds) => eds.filter((e) => e.source !== node.id && e.target !== node.id));
+                setDeletingNodeId(null);
+            }, 300);
+        },
+        [setNodes, setEdges]
+    );
+
+    // Bulk deletion function for the multi-select Floating Action Bar
+    const deleteSelectedNodesBulk = useCallback(() => {
+        if (selectedNodes.length === 0) return;
+
+        const idsToDelete = selectedNodes.map(n => n.id);
+
+        setNodes((nds) => nds.filter((n) => !idsToDelete.includes(n.id)));
+        setEdges((eds) => eds.filter((e) => !idsToDelete.includes(e.source) && !idsToDelete.includes(e.target)));
+        setSelectedNodes([]);
+    }, [selectedNodes, setNodes, setEdges]);
 
     const updateNodeData = useCallback((key: string, value: any) => {
         if (!selectedNode) return;
@@ -254,10 +467,26 @@ function ArchitectContent() {
 
     const deleteSelectedNode = useCallback(() => {
         if (!selectedNode) return;
-        setNodes((nds) => nds.filter((node) => node.id !== selectedNode.id));
-        setEdges((eds) => eds.filter((edge) => edge.source !== selectedNode.id && edge.target !== selectedNode.id));
-        setSelectedNode(null);
+        const id = selectedNode.id;
+        // Flash red before removing
+        setDeletingNodeId(id);
+        setNodes(nds => nds.map(n => n.id === id ? {
+            ...n, style: { ...n.style, border: '2px solid #ef4444', boxShadow: '0 0 30px rgba(239,68,68,0.7)', opacity: 0.5, transition: 'all 0.3s ease' }
+        } : n));
+        setTimeout(() => {
+            setNodes((nds) => nds.filter((node) => node.id !== id));
+            setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
+            setSelectedNode(null);
+            setDeletingNodeId(null);
+        }, 350);
     }, [selectedNode, setNodes, setEdges]);
+
+    const deleteEdge = useCallback((edgeId: string) => {
+        setEdges(eds => eds.map(e => e.id === edgeId ? { ...e, style: { ...e.style, stroke: '#ef4444', strokeWidth: 3, opacity: 0.3 }, animated: false } : e));
+        setTimeout(() => {
+            setEdges(eds => eds.filter(e => e.id !== edgeId));
+        }, 400);
+    }, [setEdges]);
 
     // Dynamic Compliance Table Data
     const complianceTableData = [
@@ -287,6 +516,15 @@ function ArchitectContent() {
         complianceData.forEach((d, i) => { d.A = complianceTableData[i].baseScore; });
     }
 
+    // Exclude 'attacker' nodes from the visual compromised count
+    const compromisedInfrastructureCount = (() => {
+        if (!simulationResults) return 0;
+        return simulationResults.compromisedNodes.filter((id: string) => {
+            const node = nodes.find(n => n.id === id);
+            return node && (node.data as any).componentType !== 'attacker';
+        }).length;
+    })();
+
     // Financial Impact Estimation (IBM Cost of Data Breach model inspired)
     const financialImpact = (() => {
         if (!simulationResults) return null;
@@ -315,11 +553,11 @@ function ArchitectContent() {
             { time: '00:00', label: 'Reconnaissance', desc: 'Attacker scans public endpoints and service fingerprints.', color: 'text-yellow-400' },
             { time: '00:08', label: 'Initial Access', desc: simulationResults.findings.find((f: any) => f.mitreId?.startsWith('T1190') || f.severity === 'Critical')?.description?.split(']')[1]?.trim() ?? 'Exploit identified on public-facing component.', color: 'text-orange-400' },
             { time: '00:23', label: 'Privilege Escalation', desc: 'Attacker leverages missing authentication to elevate permissions.', color: 'text-orange-500' },
-            { time: '00:41', label: 'Lateral Movement', desc: `Breach propagates across ${simulationResults.compromisedNodes.length} internal components via unencrypted links.`, color: 'text-red-400' },
+            { time: '00:41', label: 'Lateral Movement', desc: `Breach propagates across ${compromisedInfrastructureCount} internal components via unencrypted links.`, color: 'text-red-400' },
             { time: '01:02', label: 'Data Exfiltration', desc: `Attacker extracts sensitive records. Est. ${((simulationResults.findings.filter((f: any) => f.severity === 'Critical').length) * 50000).toLocaleString()} records compromised.`, color: 'text-red-600' },
         ];
         // Only show up to what's actually applicable
-        return phases.slice(0, Math.min(phases.length, 2 + simulationResults.compromisedNodes.length));
+        return phases.slice(0, Math.min(phases.length, 2 + compromisedInfrastructureCount));
     })();
 
     const onDragOver = useCallback((event: React.DragEvent) => {
@@ -348,40 +586,50 @@ function ArchitectContent() {
                 y: event.clientY - reactFlowBounds.top,
             };
 
+            const nodeColorMap: Record<string, { bg: string, border: string, glow: string }> = {
+                server: { bg: '#05101a', border: '#0ea5e9', glow: 'rgba(14,165,233,0.3)' }, // sky
+                vps: { bg: '#0a0d1a', border: '#6366f1', glow: 'rgba(99,102,241,0.4)' }, // indigo
+                node: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' }, // blue
+                router: { bg: '#1a0d05', border: '#f97316', glow: 'rgba(249,115,22,0.3)' }, // orange
+                switch: { bg: '#051a0d', border: '#10b981', glow: 'rgba(16,185,129,0.3)' }, // emerald
+                firewall: { bg: '#1a0505', border: '#ef4444', glow: 'rgba(239,68,68,0.4)' }, // red
+                cdn: { bg: '#05161a', border: '#22d3ee', glow: 'rgba(34,211,238,0.3)' }, // cyan
+                siem: { bg: '#100a1a', border: '#a855f7', glow: 'rgba(168,85,247,0.3)' }, // purple
+                attacker: { bg: '#1a0a0a', border: '#f43f5e', glow: 'rgba(244,63,94,0.4)' }, // rose
+                internet: { bg: '#0d1117', border: '#3b82f6', glow: 'rgba(59,130,246,0.4)' }, // Keep internet for backward compatibility with live dns sync
+            };
+            const colors = nodeColorMap[type] || { bg: '#111', border: '#444', glow: 'rgba(255,255,255,0.1)' };
+            const nodeId = `${type}-${Date.now()}`;
+
             const newNode: Node = {
-                id: `${type}-${Date.now()}`,
+                id: nodeId,
                 type: "default",
                 position,
                 data: {
                     label,
-                    componentType: type, // Matches schema 'type'
+                    componentType: type,
                     networkConfig: {},
                     securityConfig: {},
                     availabilityConfig: {},
                     dataConfig: {},
                 },
                 style: {
-                    background: type === "internet" ? "#000" :
-                        type === "firewall" ? "#3f0a0a" :
-                            type === "api" ? "#1e1b4b" :
-                                type === "db" ? "#2e1065" :
-                                    type === "lb" ? "#0a0a0a" :
-                                        "#111",
+                    background: colors.bg,
                     color: "#fff",
-                    border: `1px solid ${type === "internet" ? "#333" :
-                        type === "firewall" ? "#ef4444" :
-                            type === "api" ? "#4f46e5" :
-                                type === "db" ? "#9333ea" :
-                                    type === "lb" ? "#444" :
-                                        "#666"
-                        }`,
-                    borderRadius: "8px",
-                    width: 150,
+                    border: `1.5px solid ${colors.border}`,
+                    borderRadius: "10px",
+                    width: 160,
                     padding: 10,
+                    boxShadow: `0 0 20px ${colors.glow}, 0 4px 16px rgba(0,0,0,0.5)`,
+                    fontSize: '12px',
+                    fontWeight: '500',
+                    transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
                 }
             };
 
+            setNewNodeId(nodeId);
             setNodes((nds) => nds.concat(newNode));
+            setTimeout(() => setNewNodeId(null), 600);
         },
         [setNodes]
     );
@@ -432,44 +680,37 @@ function ArchitectContent() {
                     {/* Render each category */}
                     {([
                         {
-                            label: 'Perimeter',
+                            label: 'Compute & VMs',
                             items: [
-                                { type: 'internet', label: 'Internet / Proxy', icon: Globe, color: 'text-blue-400', bg: 'bg-blue-500/8', border: 'border-blue-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Public internet entry point' },
-                                { type: 'firewall', label: 'Firewall / WAF', icon: Shield, color: 'text-red-400', bg: 'bg-red-500/8', border: 'border-red-500/15', riskBadge: 'GATE', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Network traffic filtering' },
-                                { type: 'waf', label: 'WAF (Standalone)', icon: ShieldAlert, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Layer-7 web app firewall' },
-                                { type: 'vpn', label: 'VPN Gateway', icon: Globe, color: 'text-violet-400', bg: 'bg-violet-500/8', border: 'border-violet-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Encrypted tunnel gateway' },
+                                { type: 'server', label: 'Web/App Server', icon: Server, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Minutely configurable Server' },
+                                { type: 'vps', label: 'VPS Instance', icon: Cpu, color: 'text-indigo-400', bg: 'bg-indigo-500/8', border: 'border-indigo-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Virtual Private Server' },
                             ]
                         },
                         {
-                            label: 'Compute & Logic',
+                            label: 'Network Core',
                             items: [
-                                { type: 'lb', label: 'Load Balancer', icon: Activity, color: 'text-emerald-400', bg: 'bg-emerald-500/8', border: 'border-emerald-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Traffic distribution layer' },
-                                { type: 'api', label: 'API Gateway', icon: Cpu, color: 'text-indigo-400', bg: 'bg-indigo-500/8', border: 'border-indigo-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Auth, routing & rate limiting' },
-                                { type: 'auth', label: 'Auth Service', icon: Key, color: 'text-orange-400', bg: 'bg-orange-500/8', border: 'border-orange-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Identity & access management' },
-                                { type: 'lambda', label: 'Serverless / Lambda', icon: Zap, color: 'text-amber-400', bg: 'bg-amber-500/8', border: 'border-amber-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Function-as-a-Service compute' },
-                                { type: 'container', label: 'Kubernetes / Container', icon: Server, color: 'text-sky-400', bg: 'bg-sky-500/8', border: 'border-sky-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Container orchestration' },
+                                { type: 'router', label: 'Router', icon: Activity, color: 'text-orange-400', bg: 'bg-orange-500/8', border: 'border-orange-500/15', riskBadge: 'GATE', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Layer 3 Routing Engine' },
+                                { type: 'switch', label: 'Network Switch', icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/8', border: 'border-emerald-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Layer 2 Packet Switching' },
+                                { type: 'cdn', label: 'CDN Edge', icon: Cloud, color: 'text-cyan-400', bg: 'bg-cyan-500/8', border: 'border-cyan-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Content Delivery Network' },
                             ]
                         },
                         {
-                            label: 'Data & Messaging',
+                            label: 'Endpoints & Nodes',
                             items: [
-                                { type: 'db', label: 'Database', icon: Database, color: 'text-yellow-400', bg: 'bg-yellow-500/8', border: 'border-yellow-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Persistent data storage' },
-                                { type: 'queue', label: 'Message Queue', icon: MessageSquare, color: 'text-pink-400', bg: 'bg-pink-500/8', border: 'border-pink-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Async event streaming' },
-                                { type: 'cache', label: 'Cache Layer', icon: Bot, color: 'text-teal-400', bg: 'bg-teal-500/8', border: 'border-teal-500/15', riskBadge: 'MED', badgeColor: 'bg-yellow-500/15 text-yellow-400', desc: 'Redis / ElastiCache in-memory' },
-                                { type: 'storage', label: 'Object Storage', icon: Zap, color: 'text-lime-400', bg: 'bg-lime-500/8', border: 'border-lime-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'S3 / Blob storage bucket' },
+                                { type: 'node', label: 'Endpoint Node', icon: Database, color: 'text-blue-400', bg: 'bg-blue-500/8', border: 'border-blue-500/15', riskBadge: 'HIGH', badgeColor: 'bg-orange-500/15 text-orange-400', desc: 'Win/Linux Workstation' },
                             ]
                         },
                         {
-                            label: 'Cloud Services',
+                            label: 'Security & Ops',
                             items: [
-                                { type: 'cdn', label: 'CDN', icon: Cloud, color: 'text-cyan-400', bg: 'bg-cyan-500/8', border: 'border-cyan-500/15', riskBadge: 'LOW', badgeColor: 'bg-cyan-500/15 text-cyan-400', desc: 'Content Delivery Network edge' },
-                                { type: 'secrets', label: 'Secrets Manager', icon: Key, color: 'text-yellow-300', bg: 'bg-yellow-400/8', border: 'border-yellow-400/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Vault / AWS Secrets Manager' },
+                                { type: 'firewall', label: 'Firewall', icon: Shield, color: 'text-red-400', bg: 'bg-red-500/8', border: 'border-red-500/15', riskBadge: 'SEC', badgeColor: 'bg-emerald-500/15 text-emerald-400', desc: 'Stateful/Stateless FW' },
+                                { type: 'siem', label: 'SIEM Server', icon: BarChart3, color: 'text-purple-400', bg: 'bg-purple-500/8', border: 'border-purple-500/15', riskBadge: 'OPS', badgeColor: 'bg-white/10 text-white/50', desc: 'Wazuh, QRadar, Splunk' },
                             ]
                         },
                         {
-                            label: 'Observability',
+                            label: 'Threat Actors',
                             items: [
-                                { type: 'monitoring', label: 'Monitoring', icon: BarChart3, color: 'text-cyan-400', bg: 'bg-cyan-500/8', border: 'border-cyan-500/15', riskBadge: 'OPS', badgeColor: 'bg-white/10 text-white/50', desc: 'Real-time observability & alerts' },
+                                { type: 'attacker', label: 'Attacker Machine', icon: ShieldAlert, color: 'text-rose-400', bg: 'bg-rose-500/8', border: 'border-rose-500/15', riskBadge: 'CRIT', badgeColor: 'bg-red-500/15 text-red-400', desc: 'Kali Linux / Pivot Node' },
                             ]
                         },
                     ] as const).map(({ label, items }) => (
@@ -546,6 +787,15 @@ function ArchitectContent() {
                         {isDeploying ? 'Provisioning AWS...' : 'Deploy Infrastructure'}
                     </button>
 
+                    <button
+                        onClick={handleSyncDns}
+                        disabled={isSyncingDns}
+                        className="w-full bg-cyan-950/20 hover:bg-cyan-900/40 border border-cyan-500/20 hover:border-cyan-500/50 disabled:opacity-40 text-cyan-400 hover:text-cyan-300 py-2.5 rounded-xl font-medium text-xs flex items-center justify-center transition-all duration-200"
+                    >
+                        <Globe className={`h-3.5 w-3.5 mr-2 text-cyan-400 ${isSyncingDns ? 'animate-spin' : ''}`} />
+                        {isSyncingDns ? 'Syncing Telemetry...' : 'Sync AWS Route 53 Telemetry'}
+                    </button>
+
                     {/* Error Banner */}
                     {simulationError && (
                         <div className="bg-red-950/80 border border-red-500/30 rounded-xl p-3 flex items-start gap-2">
@@ -567,7 +817,7 @@ function ArchitectContent() {
             </div>
 
             {/* Main Canvas Area */}
-            <div className="flex-1 h-full bg-[#0a0a0a] relative" ref={reactFlowWrapper}>
+            <div className="flex-1 h-full bg-[#060606] relative" ref={reactFlowWrapper}>
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
@@ -578,549 +828,622 @@ function ArchitectContent() {
                     onPaneClick={onPaneClick}
                     onDrop={onDrop}
                     onDragOver={onDragOver}
+                    onNodeContextMenu={onNodeContextMenu}
+                    deleteKeyCode={['Delete', 'Backspace']}
+                    selectionOnDrag={true}
+                    panOnScroll={true}
                     fitView
-                    className="bg-black/80"
+                    className="bg-transparent"
                     defaultViewport={{ x: 0, y: 0, zoom: 1.5 }}
+                    style={{ background: 'radial-gradient(ellipse at center, #0d1117 0%, #060606 100%)' }}
                 >
-                    <Background color="#333" gap={16} />
-                    <Controls className="bg-white/10 border-white/20 fill-white" />
-                    <MiniMap className="bg-black border border-white/10" maskColor="rgba(255, 255, 255, 0.1)" nodeColor="#666" />
+                    <Background color="#1a1a2e" gap={24} size={1} />
+                    <Controls className="!bg-black/70 !border-white/10 !rounded-xl [&>button]:!bg-transparent [&>button]:!border-0 [&>button]:!text-white/40 [&>button:hover]:!text-white [&>button:hover]:!bg-white/5" />
+                    <MiniMap
+                        className="!bg-black/90 !border !border-white/10 !rounded-xl"
+                        maskColor="rgba(0,0,0,0.6)"
+                        nodeColor={(n) => {
+                            const borders: Record<string, string> = { internet: '#3b82f6', firewall: '#ef4444', waf: '#f43f5e', vpn: '#8b5cf6', lb: '#10b981', api: '#6366f1', auth: '#f97316', lambda: '#eab308', container: '#0ea5e9', db: '#a855f7', queue: '#ec4899', cache: '#14b8a6', storage: '#84cc16', cdn: '#22d3ee', secrets: '#facc15', monitoring: '#38bdf8' };
+                            return borders[(n.data as any)?.componentType] || '#666';
+                        }}
+                    />
                 </ReactFlow>
 
-                {/* Floating Metrics Overlay */}
-                <div className="absolute top-4 left-4 right-4 flex justify-between pointer-events-none">
-                    <div className="bg-black/60 backdrop-blur-md border border-white/10 px-4 py-2 rounded-lg pointer-events-auto">
-                        <div className="text-xs text-white/50 uppercase tracking-widest mb-1">Architecture Risk</div>
+                {/* Empty state with animated HUD crosshair */}
+                {nodes.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ animation: 'fadeIn 0.5s ease' }}>
+                        <div className="text-center">
+                            <div className="relative inline-block mb-6">
+                                <div className="h-16 w-16 rounded-full border border-white/10 flex items-center justify-center">
+                                    <div className="h-10 w-10 rounded-full border border-white/10 flex items-center justify-center">
+                                        <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-ping" />
+                                    </div>
+                                </div>
+                                <div className="absolute top-1/2 left-0 right-0 h-px bg-white/5" />
+                                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/5" />
+                            </div>
+                            <p className="text-white/20 text-sm font-mono tracking-widest uppercase">Drop components to begin</p>
+                            <p className="text-white/10 text-xs mt-2">Drag from the left panel onto the canvas</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Floating Multi-Select Action Bar */}
+                {selectedNodes.length > 1 && (
+                    <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/90 backdrop-blur-md border border-red-500/20 px-5 py-2.5 rounded-2xl flex items-center gap-5 z-50 animate-in slide-in-from-bottom-8 duration-300 shadow-[0_10px_40px_rgba(239,68,68,0.15)] pointer-events-auto">
+                        <span className="text-xs text-red-400 font-mono font-bold tracking-widest uppercase">{selectedNodes.length} Nodes Selected</span>
+                        <div className="w-px h-5 bg-white/10" />
+                        <button
+                            onClick={deleteSelectedNodesBulk}
+                            className="flex items-center gap-2 text-xs font-bold text-white/70 hover:text-white bg-red-500/10 hover:bg-red-500/30 border border-transparent hover:border-red-500/50 px-4 py-2 rounded-xl transition-all duration-200 uppercase tracking-widest"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                            Delete Bulk
+                        </button>
+                    </div>
+                )}
+
+                {/* Scanline overlay for HUD feel */}
+                <div className="absolute inset-0 pointer-events-none opacity-[0.015]" style={{
+                    backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.5) 2px, rgba(255,255,255,0.5) 3px)',
+                    backgroundSize: '100% 3px'
+                }} />
+
+                {/* HUD Metrics Overlay */}
+                <div className="absolute top-3 left-3 right-3 flex justify-between items-start pointer-events-none z-10">
+                    {/* Risk score */}
+                    <div className="bg-black/80 backdrop-blur-xl border border-white/8 px-4 py-2.5 rounded-xl pointer-events-auto" style={{ animation: 'slideDown 0.3s ease' }}>
+                        <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] mb-1 font-mono">Architecture Risk</div>
                         {simulationResults ? (
-                            <div className="flex items-end space-x-2">
-                                <span className={`text-2xl font-bold leading-none ${simulationResults.impactScore > 70 ? 'text-red-500' : simulationResults.impactScore > 40 ? 'text-yellow-500' : 'text-emerald-400'}`}>
-                                    {simulationResults.impactScore}
-                                </span>
-                                <span className={`text-sm font-medium mb-0.5 ${simulationResults.impactScore > 70 ? 'text-red-400' : simulationResults.impactScore > 40 ? 'text-yellow-400' : 'text-emerald-400'}`}>
-                                    {simulationResults.impactScore > 70 ? 'Critical' : simulationResults.impactScore > 40 ? 'Elevated' : 'Secure'}
-                                </span>
+                            <div className="flex items-end gap-2">
+                                <span className={`text-2xl font-bold leading-none font-mono ${simulationResults.impactScore > 70 ? 'text-red-400' :
+                                    simulationResults.impactScore > 40 ? 'text-amber-400' : 'text-emerald-400'
+                                    }`}>{simulationResults.impactScore}</span>
+                                <span className={`text-xs font-semibold mb-0.5 ${simulationResults.impactScore > 70 ? 'text-red-500/70' :
+                                    simulationResults.impactScore > 40 ? 'text-amber-500/70' : 'text-emerald-500/70'
+                                    }`}>{simulationResults.impactScore > 70 ? '⬛ CRITICAL' : simulationResults.impactScore > 40 ? '▲ ELEVATED' : '✓ SECURE'}</span>
                             </div>
                         ) : (
-                            <div className="text-sm text-white/30 italic">Not simulated</div>
+                            <div className="text-xs text-white/20 font-mono">— Not simulated</div>
                         )}
                     </div>
 
-                    <div className="bg-black/60 backdrop-blur-md border border-white/10 px-4 py-2 rounded-lg pointer-events-auto flex items-center space-x-6">
-                        <div>
-                            <div className="text-xs text-white/50 mb-1">Nodes</div>
-                            <div className="font-semibold text-white/90">{nodes.length}</div>
-                        </div>
-                        <div>
-                            <div className="text-xs text-white/50 mb-1">Edges</div>
-                            <div className="font-semibold text-white/90">{edges.length}</div>
-                        </div>
-                        <div>
-                            <div className="text-xs text-white/50 mb-1">State</div>
-                            <div className="font-semibold text-green-400 flex items-center">
-                                <span className="h-2 w-2 rounded-full bg-green-400 mr-2"></span>
-                                Saved
+                    {/* Node/Edge stats strip */}
+                    <div className="bg-black/80 backdrop-blur-xl border border-white/8 px-4 py-2.5 rounded-xl pointer-events-auto flex items-center gap-5" style={{ animation: 'slideDown 0.3s ease 0.05s both' }}>
+                        {[{ label: 'Nodes', value: nodes.length, color: 'text-cyan-400' }, { label: 'Edges', value: edges.length, color: 'text-blue-400' }, { label: 'State', value: '● Live', color: 'text-emerald-400' }].map(s => (
+                            <div key={s.label}>
+                                <div className="text-[9px] text-white/25 uppercase tracking-widest font-mono mb-0.5">{s.label}</div>
+                                <div className={`text-sm font-bold font-mono ${s.color}`}>{s.value}</div>
                             </div>
-                        </div>
+                        ))}
                     </div>
                 </div>
+
+                {/* Edge delete buttons on hover — via injected CSS */}
+                <style dangerouslySetInnerHTML={{
+                    __html: `
+                    .react-flow__edge:hover .react-flow__edge-path { stroke-width: 3 !important; }
+                    .react-flow__edge.selected .react-flow__edge-path { stroke: #22d3ee !important; filter: drop-shadow(0 0 6px rgba(34,211,238,0.6)); }
+                    .react-flow__node { transition: box-shadow 0.2s ease, opacity 0.3s ease !important; }
+                    .react-flow__node:hover { filter: brightness(1.15); }
+                    .react-flow__node.selected .react-flow__node-default { border-color: #22d3ee !important; box-shadow: 0 0 0 2px rgba(34,211,238,0.3) !important; }
+                    .react-flow__handle { background: #22d3ee !important; border-color: rgba(34,211,238,0.3) !important; width: 8px !important; height: 8px !important; border-radius: 2px !important; }
+                    .react-flow__handle:hover { background: #fff !important; transform: scale(1.4); }
+                    .react-flow__controls { box-shadow: none !important; }
+                    .react-flow__minimap { border-radius: 12px !important; overflow: hidden !important; }
+                    @keyframes nodeEntry { from { opacity: 0; transform: scale(0.7); } to { opacity: 1; transform: scale(1); } }
+                    @keyframes nodeExit  { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.6); } }
+                    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                    @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+                    @keyframes glowPulse { 0%,100% { box-shadow: 0 0 15px rgba(34,211,238,0.3); } 50% { box-shadow: 0 0 30px rgba(34,211,238,0.7); } }
+                `}} />
             </div>
 
-            {/* Configuration Right Panel - Sliding Entry */}
-            <div className={`w-80 bg-black border-l border-white/10 flex flex-col transition-all duration-300 ${selectedNode ? 'translate-x-0' : 'translate-x-full hidden'}`}>
-                <div className="p-4 border-b border-white/10 bg-white/5 flex items-start justify-between">
-                    <div>
-                        <h3 className="font-semibold text-lg">{selectedNode?.data.label as string || "Component config"}</h3>
-                        <p className="text-sm text-white/50">ID: {selectedNode?.id}</p>
-                    </div>
-                    <button
-                        onClick={deleteSelectedNode}
-                        className="p-2 hover:bg-red-500/20 text-white/50 hover:text-red-400 rounded-lg transition-colors border border-transparent hover:border-red-500/30"
-                        title="Delete Component">
-                        <Trash2 className="h-4 w-4" />
-                    </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-4 space-y-6">
-
-                    {/* Detailed Component Configurations */}
-                    <div className="space-y-6">
-
-                        {/* 1. Network Configuration */}
-                        <div className="space-y-3">
-                            <h4 className="text-xs font-semibold uppercase text-cyan-400 tracking-wider flex items-center border-b border-white/10 pb-2">
-                                <Globe className="h-3 w-3 mr-2" /> Network Configuration
-                            </h4>
-                            <div className="space-y-3 pt-1">
-                                {(selectedNode?.data?.componentType !== 'auth' && selectedNode?.data?.componentType !== 'monitoring') && (
-                                    <>
-                                        <label className="text-sm text-white/70">Exposure</label>
-                                        <select
-                                            value={selectedNode?.data?.exposure as string || "Private"}
-                                            onChange={(e) => updateNodeData("exposure", e.target.value)}
-                                            className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors"
-                                        >
-                                            <option value="Public">Public / Internet Facing</option>
-                                            <option value="Private">Private Subnet</option>
-                                            <option value="Internal VPC">Internal VPC Only</option>
-                                        </select>
-                                    </>
-                                )}
-                                <label className="text-sm text-white/70">Allowed IP Range</label>
-                                <input
-                                    type="text"
-                                    value={selectedNode?.data?.ipRange as string || "0.0.0.0/0"}
-                                    onChange={(e) => updateNodeData("ipRange", e.target.value)}
-                                    className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors placeholder:text-white/20"
-                                    placeholder="e.g. 10.0.0.0/16"
-                                />
-                                {selectedNode?.data?.componentType === 'firewall' && (
-                                    <>
-                                        <label className="text-sm text-white/70 mt-2">Default Policy</label>
-                                        <select
-                                            value={selectedNode?.data?.defaultPolicy as string || "Deny All (Secure)"}
-                                            onChange={(e) => updateNodeData("defaultPolicy", e.target.value)}
-                                            className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors">
-                                            <option value="Deny All (Secure)">Deny All (Secure)</option>
-                                            <option value="Allow All (Insecure)">Allow All (Insecure)</option>
-                                        </select>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* 2. Security Configuration */}
-                        <div className="space-y-3">
-                            <h4 className="text-xs font-semibold uppercase text-cyan-400 tracking-wider flex items-center border-b border-white/10 pb-2">
-                                <Shield className="h-3 w-3 mr-2" /> Security Controls
-                            </h4>
-                            <div className="space-y-3 pt-1">
-                                {selectedNode?.data?.componentType === 'api' && (
-                                    <>
-                                        <label className="text-sm text-white/70">Authentication Type</label>
-                                        <select
-                                            value={selectedNode?.data?.authType as string || "JWT"}
-                                            onChange={(e) => updateNodeData("authType", e.target.value)}
-                                            className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors">
-                                            <option value="JWT">JWT</option>
-                                            <option value="OAuth2">OAuth2</option>
-                                            <option value="APIKey">API Key</option>
-                                            <option value="Internal">Internal Auth</option>
-                                            <option value="None">None (Public)</option>
-                                        </select>
-                                        <label className="flex items-center space-x-3 cursor-pointer mt-2">
-                                            <input type="checkbox"
-                                                checked={(selectedNode?.data?.inputValidation as boolean) ?? true}
-                                                onChange={(e) => updateNodeData("inputValidation", e.target.checked)}
-                                                className="form-checkbox bg-black border-white/20 text-cyan-500 rounded focus:ring-cyan-500" />
-                                            <span className="text-sm text-white/80">Input Validation enabled</span>
-                                        </label>
-                                    </>
-                                )}
-
-                                {selectedNode?.data?.componentType === 'db' && (
-                                    <>
-                                        <label className="flex items-center space-x-3 cursor-pointer">
-                                            <input type="checkbox"
-                                                checked={(selectedNode?.data?.encryptionAtRest as boolean) ?? false}
-                                                onChange={(e) => updateNodeData("encryptionAtRest", e.target.checked)}
-                                                className="form-checkbox bg-black border-white/20 text-cyan-500 rounded focus:ring-cyan-500" />
-                                            <span className="text-sm text-white/80">Encryption at Rest (KMS)</span>
-                                        </label>
-                                        <label className="flex items-center space-x-3 cursor-pointer">
-                                            <input type="checkbox"
-                                                checked={(selectedNode?.data?.auditLoggingEnabled as boolean) ?? false}
-                                                onChange={(e) => updateNodeData("auditLoggingEnabled", e.target.checked)}
-                                                className="form-checkbox bg-black border-white/20 text-cyan-500 rounded focus:ring-cyan-500" />
-                                            <span className="text-sm text-white/80">Audit Logging Enabled</span>
-                                        </label>
-                                    </>
-                                )}
-
-                                <label className="flex items-center space-x-3 cursor-pointer mt-2">
-                                    <input type="checkbox"
-                                        checked={(selectedNode?.data?.encryptionInTransit as boolean) ?? true}
-                                        onChange={(e) => updateNodeData("encryptionInTransit", e.target.checked)}
-                                        className="form-checkbox bg-black border-white/20 text-cyan-500 rounded focus:ring-cyan-500" />
-                                    <span className="text-sm text-white/80">Require TLS/HTTPS</span>
-                                </label>
-                            </div>
-                        </div>
-
-                        {/* 3. Availability Configuration */}
-                        <div className="space-y-3">
-                            <h4 className="text-xs font-semibold uppercase text-cyan-400 tracking-wider flex items-center border-b border-white/10 pb-2">
-                                <Activity className="h-3 w-3 mr-2" /> Availability & Compute
-                            </h4>
-                            <div className="space-y-3 pt-1">
-                                <div className="flex items-center justify-between">
-                                    <label className="text-sm text-white/70">Instance Count</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        value={selectedNode?.data?.instanceCount as number || 1}
-                                        onChange={(e) => updateNodeData("instanceCount", parseInt(e.target.value))}
-                                        className="w-20 bg-black/50 border border-white/10 rounded-lg p-1.5 text-sm text-center focus:outline-none focus:border-cyan-500 transition-colors text-white"
-                                    />
+            {/* Configuration Right Panel - Spring Slide */}
+            <div className={`
+                w-80 bg-[#0a0a0a] border-l border-white/[0.06] flex flex-col
+                transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
+                ${selectedNode ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8 w-0 overflow-hidden border-0'}
+            `}>
+                {selectedNode && (
+                    <>
+                        <div className="p-4 border-b border-white/[0.06] flex items-start justify-between flex-shrink-0" style={{ minWidth: '320px' }}>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <div className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+                                    <span className="text-[9px] text-cyan-400/60 font-mono uppercase tracking-widest">Component Selected</span>
                                 </div>
-
-                                <label className="flex items-center space-x-3 cursor-pointer">
-                                    <input type="checkbox"
-                                        checked={(selectedNode?.data?.autoScaling as boolean) ?? false}
-                                        onChange={(e) => updateNodeData("autoScaling", e.target.checked)}
-                                        className="form-checkbox bg-black border-white/20 text-cyan-500 rounded focus:ring-cyan-500" />
-                                    <span className="text-sm text-white/80">Auto-Scaling Enabled</span>
-                                </label>
-
-                                {(selectedNode?.data?.componentType === 'db' || selectedNode?.data?.componentType === 'queue') && (
-                                    <label className="flex items-center space-x-3 cursor-pointer">
-                                        <input type="checkbox"
-                                            checked={(selectedNode?.data?.automatedBackups as boolean) ?? true}
-                                            onChange={(e) => updateNodeData("automatedBackups", e.target.checked)}
-                                            className="form-checkbox bg-black border-white/20 text-cyan-500 rounded focus:ring-cyan-500" />
-                                        <span className="text-sm text-white/80">Automated Daily Backups</span>
-                                    </label>
-                                )}
+                                <h3 className="font-bold text-base text-white truncate">{selectedNode?.data.label as string}</h3>
+                                <p className="text-[10px] text-white/30 font-mono mt-0.5 truncate">ID: {selectedNode?.id}</p>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                                <button
+                                    onClick={deleteSelectedNode}
+                                    className="p-2 hover:bg-red-500/10 text-white/20 hover:text-red-400 rounded-lg transition-all duration-200 border border-transparent hover:border-red-500/20 group"
+                                    title="Delete Component (Del)">
+                                    <Trash2 className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" />
+                                </button>
+                                <button
+                                    onClick={() => setSelectedNode(null)}
+                                    className="p-2 hover:bg-white/5 text-white/20 hover:text-white/60 rounded-lg transition-all duration-200"
+                                >
+                                    <span className="text-xs">✕</span>
+                                </button>
                             </div>
                         </div>
 
-                        {/* 4. Data Configuration */}
-                        <div className="space-y-3">
-                            <h4 className="text-xs font-semibold uppercase text-cyan-400 tracking-wider flex items-center border-b border-white/10 pb-2">
-                                <Database className="h-3 w-3 mr-2" /> Data Classification
-                            </h4>
-                            <div className="space-y-3 pt-1">
-                                <label className="text-sm text-white/70">Data Type</label>
-                                <select
-                                    value={selectedNode?.data?.dataType as string || "Internal"}
-                                    onChange={(e) => updateNodeData("dataType", e.target.value)}
-                                    className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors">
-                                    <option value="Public">Public Data</option>
-                                    <option value="Internal">Internal (Company Only)</option>
-                                    <option value="Confidential">Confidential</option>
-                                    <option value="PII">PII (Personal Info)</option>
-                                    <option value="Financial">Financial / PCI</option>
-                                </select>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5" style={{ minWidth: '320px' }}>
+                            <ConfigContext.Provider value={{ d: selectedNode?.data, updateNodeData }}>
+                                {(() => {
+                                    const ct = selectedNode?.data?.componentType as string;
+                                    const d = selectedNode?.data as any;
 
-                                <div>
-                                    <div className="flex justify-between mb-1">
-                                        <label className="text-sm text-white/70">Sensitivity Level (1-5)</label>
-                                        <span className="text-xs text-cyan-400 font-bold bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded">{selectedNode?.data?.sensitivityLevel as number || 1}</span>
-                                    </div>
-                                    <input
-                                        type="range"
-                                        min="1"
-                                        max="5"
-                                        step="1"
-                                        value={selectedNode?.data?.sensitivityLevel as number || 1}
-                                        onChange={(e) => updateNodeData("sensitivityLevel", parseInt(e.target.value))}
-                                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                                    />
-                                </div>
-                            </div>
+                                    // ── SERVER & VPS ───────────────────────────────
+                                    if (ct === 'server' || ct === 'vps') return <div className="space-y-4">
+                                        <Sec icon={Server} title="Operating System">
+                                            <Sel field="osFamily" label="OS Platform" options={['Debian/Ubuntu Linux', 'RHEL/CentOS Linux', 'Windows Server 2022', 'Windows Server 2019', 'FreeBSD']} defaultVal="Debian/Ubuntu Linux" />
+                                            <TxtInput field="osVersion" label="Version / Kernel" placeholder="e.g. Ubuntu 22.04 LTS" />
+                                        </Sec>
+                                        <Sec icon={Activity} title="Running Services">
+                                            <Sel field="webService" label="Web Server Daemon" options={['None', 'Apache HTTPD', 'Nginx', 'IIS 10', 'Tomcat', 'Node.js Express']} defaultVal="Nginx" />
+                                            <Sel field="dbService" label="Database Daemon" options={['None', 'MySQL/MariaDB', 'PostgreSQL', 'MS SQL Server', 'MongoDB']} defaultVal="None" />
+                                            <TxtInput field="customPorts" label="Listening Ports" placeholder="80, 443, 8080" />
+                                        </Sec>
+                                        <Sec icon={Globe} title="Network Configuration (IPv4)">
+                                            <TxtInput field="ipAddress" label="IPv4 Address" placeholder="192.168.1.10" />
+                                            <TxtInput field="subnetMask" label="Subnet Mask" placeholder="255.255.255.0" />
+                                            <TxtInput field="defaultGateway" label="Default Gateway" placeholder="192.168.1.1" />
+                                            <TxtInput field="dnsServers" label="DNS Servers" placeholder="8.8.8.8, 1.1.1.1" />
+                                            <Toggle field="dhcpEnabled" label="DHCP Enabled" defaultVal={false} />
+                                        </Sec>
+                                        <Sec icon={Shield} title="Local Security">
+                                            <Toggle field="localFirewall" label="Local Firewall (iptables/Windows FW)" defaultVal={true} />
+                                            <Toggle field="sshEnabled" label="SSH / RDP Access" defaultVal={true} />
+                                            <Sel field="authMethod" label="Auth Method" options={['Password', 'Key-based (RSA/Ed25519)', 'Active Directory/LDAP']} defaultVal="Key-based (RSA/Ed25519)" />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── ROUTER / SWITCH ──────────────────────────────
+                                    if (ct === 'router' || ct === 'switch') return <div className="space-y-4">
+                                        <Sec icon={Activity} title="Device Config">
+                                            <Sel field="deviceVendor" label="Vendor OS" options={['Cisco IOS', 'Juniper Junos', 'MikroTik RouterOS', 'Arista EOS', 'Generic L3']} defaultVal="Cisco IOS" />
+                                            <TxtInput field="managementIp" label="Management IP (VLAN 1)" placeholder="192.168.1.254" />
+                                        </Sec>
+                                        <Sec icon={Globe} title="Routing / Switching Protocols">
+                                            <Sel field="routingProtocol" label="Dynamic Routing" options={['Static Only', 'OSPF', 'BGP', 'EIGRP', 'RIPv2']} defaultVal="Static Only" />
+                                            {ct === 'switch' && <TxtInput field="vlans" label="Configured VLANs" placeholder="10, 20, 30, 99" />}
+                                            <Toggle field="stpEnabled" label="Spanning Tree Protocol (STP)" defaultVal={true} />
+                                        </Sec>
+                                        <Sec icon={Key} title="Access & Security">
+                                            <Toggle field="sshEnabled" label="SSH Enabled (Disable Telnet)" defaultVal={true} />
+                                            <Toggle field="portSecurity" label="MAC Port Security" defaultVal={false} />
+                                        </Sec>
+                                    </div>;
+
+                                    // ── ENDPOINT / LAPTOP ────────────────────────────
+                                    if (ct === 'node') return <div className="space-y-4">
+                                        <Sec icon={Database} title="Workstation OS">
+                                            <Sel field="osFamily" label="OS Platform" options={['Windows 11 Corporate', 'Windows 10', 'macOS Sonoma', 'Ubuntu Desktop']} defaultVal="Windows 11 Corporate" />
+                                        </Sec>
+                                        <Sec icon={Globe} title="Network Interface (WLAN/LAN)">
+                                            <TxtInput field="ipAddress" label="IPv4 Address" placeholder="10.10.10.45" />
+                                            <TxtInput field="defaultGateway" label="Default Gateway" placeholder="10.10.10.1" />
+                                            <Toggle field="dhcpEnabled" label="DHCP Client" defaultVal={true} />
+                                        </Sec>
+                                        <Sec icon={Shield} title="Endpoint Security (EDR/AV)">
+                                            <Toggle field="antivirusEnabled" label="Windows Defender / AV Active" defaultVal={true} />
+                                            <Toggle field="edrAgent" label="EDR Agent (CrowdStrike/SentinelOne)" defaultVal={false} />
+                                            <Sel field="privilegeLevel" label="User Context privilege" options={['Standard User', 'Local Administrator']} defaultVal="Standard User" />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── SIEM SERVER ──────────────────────────────────
+                                    if (ct === 'siem') return <div className="space-y-4">
+                                        <Sec icon={BarChart3} title="SIEM Platform">
+                                            <Sel field="siemVendor" label="SIEM Engine" options={['Wazuh', 'IBM QRadar', 'Splunk Enterprise', 'Elastic Security', 'AlienVault OSSIM']} defaultVal="Wazuh" />
+                                        </Sec>
+                                        <Sec icon={Globe} title="Ingestion Setup">
+                                            <TxtInput field="ingestPorts" label="Listening Ports (Syslog/Agents)" placeholder="514, 1514, 9200" />
+                                            <Toggle field="tlsSyslog" label="TLS Encrypted Ingestion" defaultVal={true} />
+                                            <NumInput field="logRetentionDays" label="Log Retention (Days)" min={1} max={3650} defaultVal={90} />
+                                        </Sec>
+                                    </div>;
+
+                                    // ── ATTACKER MACHINE ──────────────────────────────
+                                    if (ct === 'attacker') return <div className="space-y-4">
+                                        <Sec icon={ShieldAlert} title="Threat Actor Toolkit">
+                                            <Sel field="attackerOs" label="Offensive OS" options={['Kali Linux', 'Parrot OS', 'Commando VM', 'Custom Botnet C2']} defaultVal="Kali Linux" />
+                                        </Sec>
+                                        <Sec icon={Activity} title="Pre-Installed Tooling">
+                                            <Toggle field="nmap" label="Nmap / Masscan" defaultVal={true} />
+                                            <Toggle field="metasploit" label="Metasploit Framework" defaultVal={true} />
+                                            <Toggle field="mimikatz" label="Mimikatz / Impacket" defaultVal={true} />
+                                        </Sec>
+                                        <Sec icon={Globe} title="Network Position">
+                                            <TxtInput field="ipAddress" label="Spoofed/Real IP" placeholder="203.0.113.66" />
+                                            <Sel field="networkContext" label="Context Location" options={['External (Internet)', 'Internal (Compromised VDI)', 'DMZ Hijack']} defaultVal="External (Internet)" />
+                                        </Sec>
+                                    </div>;
+
+                                    // ── DNS INTERNET NODE (Backward Compatibility) ───
+                                    if (ct === 'internet') return <div className="space-y-4">
+                                        <Sec icon={Globe} title="Live AWS Route 53 Endpoint">
+                                            <TxtInput field="dnsRecordType" label="DNS Record Type" placeholder="A, CNAME" />
+                                            <TxtInput field="ttl" label="TTL Status" placeholder="30" />
+                                            <Toggle field="tlsEnforced" label="TLS Enforced" defaultVal={true} />
+                                        </Sec>
+                                        <SensSlider />
+                                    </div>;
+
+                                    // ── FIREWALL (Upgraded) ──────────────────────────
+                                    if (ct === 'firewall') return <div className="space-y-4">
+                                        <Sec icon={Shield} title="Appliance OS">
+                                            <Sel field="fwVendor" label="Vendor / Type" options={['pfSense (FreeBSD)', 'Palo Alto PAN-OS', 'Cisco ASA', 'Fortinet FortiOS', 'iptables (Linux)']} defaultVal="pfSense (FreeBSD)" />
+                                        </Sec>
+                                        <Sec icon={Globe} title="Interface Config">
+                                            <TxtInput field="wanIp" label="WAN / External IP" placeholder="203.0.113.5" />
+                                            <TxtInput field="lanIp" label="LAN / Internal IP" placeholder="10.0.0.1" />
+                                        </Sec>
+                                        <Sec icon={ShieldAlert} title="Access Control Lists (ACL)">
+                                            <Sel field="defaultPolicy" label="Default Policy" options={['Default Deny (Secure)', 'Default Allow (Insecure)']} defaultVal="Default Deny (Secure)" />
+                                            <Toggle field="statefulInspection" label="Stateful Packet Inspection" defaultVal={true} />
+                                            <Toggle field="natEnabled" label="NAT / Masquerading" defaultVal={true} />
+                                            <TxtInput field="whitelistedIPs" label="Ingress Allowed IPs" placeholder="192.168.1.0/24" />
+                                        </Sec>
+                                        <Sec icon={Activity} title="Advanced Services">
+                                            <Toggle field="enableIDS" label="IDS/IPS (Snort/Suricata)" />
+                                            <Toggle field="vpnServer" label="IPSec / OpenVPN Server" />
+                                        </Sec>
+                                    </div>;
+
+                                    // ── CDN ──────────────────────────────────────────
+                                    if (ct === 'cdn') return <div className="space-y-4">
+                                        <Sec icon={Cloud} title="Delivery Network">
+                                            <Sel field="cdnVendor" label="Provider" options={['Cloudflare', 'AWS CloudFront', 'Akamai', 'Fastly']} defaultVal="Cloudflare" />
+                                            <Toggle field="ddosProtection" label="DDoS Protection Enabled" defaultVal={true} />
+                                            <Toggle field="wafEnabled" label="Edge WAF Enabled" defaultVal={true} />
+                                            <TxtInput field="cacheHitRatio" label="Target Cache Hit Ratio" placeholder="95%" />
+                                        </Sec>
+                                    </div>;
+
+                                    // ── FALLBACK ──────────────────────────────────────
+                                    return <div className="flex flex-col items-center justify-center h-48 space-y-3 opacity-60">
+                                        <Terminal className="h-8 w-8 text-cyan-500" />
+                                        <div className="text-white/40 text-xs font-mono text-center">
+                                            No Deep Configuration defined<br />for this legacy component type.<br /><br />Try dragging a newer "Perimeter" or<br />"Compute" node onto the canvas.
+                                        </div>
+                                    </div>;
+                                })()}
+                            </ConfigContext.Provider>
                         </div>
-
-                    </div>
-
-                </div>
+                    </>
+                )}
             </div>
 
             {/* Compliance & Threat Report Overlay */}
-            {simulationResults && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 md:p-8 animate-in fade-in duration-300">
-                    <div className="bg-black border border-white/10 rounded-2xl w-full max-w-5xl max-h-full flex flex-col shadow-2xl relative overflow-hidden">
+            {
+                simulationResults && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 md:p-8 animate-in fade-in duration-300">
+                        <div className="bg-[#111] border border-red-500/20 rounded-2xl w-full max-w-6xl max-h-full flex flex-col shadow-[0_0_100px_rgba(239,68,68,0.1)] relative overflow-hidden">
 
-                        {/* Header */}
-                        <div className="p-6 border-b border-white/10 bg-gradient-to-r from-red-500/5 via-transparent to-transparent flex items-center justify-between sticky top-0 z-10 backdrop-blur-xl">
-                            <div className="flex items-center space-x-4">
-                                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
-                                    <ShieldAlert className="h-6 w-6 text-red-400" />
-                                </div>
-                                <div>
-                                    <h2 className="text-xl font-bold text-white tracking-tight">Enterprise Threat Analysis Report</h2>
-                                    <p className="text-sm text-white/50">DFS Attack Simulation · MITRE ATT&CK · Compliance Mapping</p>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <button
-                                    onClick={() => setZeroTrustMode(z => !z)}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all ${zeroTrustMode ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_15px_rgba(6,182,212,0.3)]' : 'bg-white/5 text-white/40 border-white/10 hover:border-white/30'}`}
-                                >
-                                    <Shield className="h-3 w-3" />
-                                    Zero Trust {zeroTrustMode ? 'ON' : 'OFF'}
-                                </button>
-                                <div className="text-right">
-                                    <div className="text-xs text-white/50 uppercase tracking-wider mb-1">Exposure Index</div>
-                                    <div className={`text-2xl font-bold ${simulationResults.impactScore > 70 ? 'text-red-500' : simulationResults.impactScore > 30 ? 'text-yellow-500' : 'text-cyan-500'}`}>
-                                        {zeroTrustMode ? Math.round(simulationResults.impactScore * 0.45) : simulationResults.impactScore} <span className="text-sm font-medium opacity-50">/100</span>
+                            {/* Header */}
+                            <div className="p-6 border-b border-white/10 bg-gradient-to-r from-red-500/5 via-transparent to-transparent flex items-center justify-between sticky top-0 z-10 backdrop-blur-xl">
+                                <div className="flex items-center space-x-4">
+                                    <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+                                        <ShieldAlert className="h-6 w-6 text-red-400" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold text-white tracking-tight">Enterprise Threat Analysis Report</h2>
+                                        <p className="text-sm text-white/50">DFS Attack Simulation · MITRE ATT&CK · Compliance Mapping</p>
                                     </div>
                                 </div>
-                                <button
-                                    onClick={() => setSimulationResults(null)}
-                                    className="p-2 hover:bg-white/10 text-white/50 hover:text-white rounded-lg transition-colors border border-transparent hover:border-white/20"
-                                >
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Financial Impact Banner */}
-                        {financialImpact && (
-                            <div className="mx-6 mt-6 p-4 bg-gradient-to-r from-red-950/80 to-orange-950/60 border border-red-500/20 rounded-xl flex flex-wrap gap-6 items-center justify-between">
-                                <div>
-                                    <div className="text-xs text-red-400/70 uppercase tracking-widest mb-1 font-bold">Estimated Breach Cost</div>
-                                    <div className="text-2xl font-bold text-red-400">₹{financialImpact.rangeLow}Cr – ₹{financialImpact.rangeHigh}Cr</div>
-                                    <div className="text-xs text-white/30 mt-0.5">Source: IBM Cost of Data Breach Report 2024 (INR adjusted)</div>
-                                </div>
-                                <div className="h-10 w-px bg-white/10 hidden md:block" />
-                                <div className="text-center">
-                                    <div className="text-xs text-orange-400/70 uppercase tracking-widest mb-1 font-bold">Est. Downtime</div>
-                                    <div className="text-2xl font-bold text-orange-400">{financialImpact.downtimeHours}h</div>
-                                </div>
-                                <div className="h-10 w-px bg-white/10 hidden md:block" />
-                                <div className="text-center">
-                                    <div className="text-xs text-yellow-400/70 uppercase tracking-widest mb-1 font-bold">Records at Risk</div>
-                                    <div className="text-2xl font-bold text-yellow-400">{financialImpact.recordsAtRisk.toLocaleString()}</div>
-                                </div>
-                                <div className="h-10 w-px bg-white/10 hidden md:block" />
-                                <div className="text-center hidden md:block">
-                                    <div className="text-xs text-white/40 uppercase tracking-widest mb-1 font-bold">Blast Radius</div>
-                                    <div className="text-2xl font-bold text-white">{simulationResults.compromisedNodes.length} <span className="text-sm font-normal text-white/40">/ {nodes.length} nodes</span></div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Findings Content */}
-                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-
-                            {/* Zing AI Executive Summary Card */}
-                            <div className="mb-8 p-1 rounded-2xl bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-transparent">
-                                <div className="bg-black/80 backdrop-blur-xl border border-white/5 rounded-xl p-6">
-                                    <div className="flex items-center space-x-3 mb-4">
-                                        <div className="p-2 rounded-lg bg-cyan-500/10">
-                                            <Sparkles className="h-5 w-5 text-cyan-400" />
+                                <div className="flex items-center gap-4">
+                                    <button
+                                        onClick={() => setZeroTrustMode(z => !z)}
+                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all ${zeroTrustMode ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-[0_0_15px_rgba(6,182,212,0.3)]' : 'bg-white/5 text-white/40 border-white/10 hover:border-white/30'}`}
+                                    >
+                                        <Shield className="h-3 w-3" />
+                                        Zero Trust {zeroTrustMode ? 'ON' : 'OFF'}
+                                    </button>
+                                    <div className="text-right">
+                                        <div className="text-xs text-white/50 uppercase tracking-wider mb-1">Exposure Index</div>
+                                        <div className={`text-2xl font-bold ${simulationResults.impactScore > 70 ? 'text-red-500' : simulationResults.impactScore > 30 ? 'text-yellow-500' : 'text-cyan-500'}`}>
+                                            {zeroTrustMode ? Math.round(simulationResults.impactScore * 0.45) : simulationResults.impactScore} <span className="text-sm font-medium opacity-50">/100</span>
                                         </div>
-                                        <h3 className="text-lg font-semibold text-white flex items-center">
-                                            Zin AI Executive Summary
+                                    </div>
+                                    <button
+                                        onClick={() => setSimulationResults(null)}
+                                        className="p-2 hover:bg-white/10 text-white/50 hover:text-white rounded-lg transition-colors border border-transparent hover:border-white/20"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Financial Impact Banner */}
+                            {financialImpact && (
+                                <div className={`mx-6 mt-6 p-5 border rounded-2xl flex flex-wrap gap-6 items-center justify-between shadow-lg transition-colors ${simulationResults.impactScore > 0
+                                    ? 'bg-gradient-to-r from-red-950/80 to-orange-950/60 border-red-500/20 shadow-red-900/20'
+                                    : 'bg-gradient-to-r from-emerald-950/40 to-cyan-950/40 border-emerald-500/20 shadow-emerald-900/10'
+                                    }`}>
+                                    <div>
+                                        <div className={`text-xs uppercase tracking-widest mb-1 font-bold ${simulationResults.impactScore > 0 ? 'text-red-400/70' : 'text-emerald-400/70'}`}>Estimated Breach Cost</div>
+                                        <div className={`text-3xl font-bold ${simulationResults.impactScore > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                            {simulationResults.impactScore > 0 ? `₹${financialImpact.rangeLow}Cr – ₹${financialImpact.rangeHigh}Cr` : '₹0 (Secure)'}
+                                        </div>
+                                        <div className="text-[10px] text-white/30 mt-1 uppercase tracking-wider">Source: IBM Cost of Data Breach Report 2024</div>
+                                    </div>
+                                    <div className="h-12 w-px bg-white/10 hidden md:block" />
+                                    <div className="text-center">
+                                        <div className={`text-xs uppercase tracking-widest mb-1 font-bold ${simulationResults.impactScore > 0 ? 'text-orange-400/70' : 'text-emerald-400/70'}`}>Est. Downtime</div>
+                                        <div className={`text-3xl font-light ${simulationResults.impactScore > 0 ? 'text-orange-400' : 'text-white'}`}>{financialImpact.downtimeHours}h</div>
+                                    </div>
+                                    <div className="h-12 w-px bg-white/10 hidden md:block" />
+                                    <div className="text-center">
+                                        <div className={`text-xs uppercase tracking-widest mb-1 font-bold ${simulationResults.impactScore > 0 ? 'text-yellow-400/70' : 'text-emerald-400/70'}`}>Records at Risk</div>
+                                        <div className={`text-3xl font-light ${simulationResults.impactScore > 0 ? 'text-yellow-400' : 'text-white'}`}>{financialImpact.recordsAtRisk.toLocaleString()}</div>
+                                    </div>
+                                    <div className="h-12 w-px bg-white/10 hidden md:block" />
+                                    <div className="text-center hidden md:block pr-4">
+                                        <div className="text-xs text-white/40 uppercase tracking-widest mb-1 font-bold">Blast Radius</div>
+                                        <div className="text-3xl font-bold text-white">
+                                            {simulationResults.compromisedNodes.length}
+                                            <span className="text-sm font-normal text-white/40 ml-1">/ {nodes.length} nodes</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Findings Content */}
+                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+
+                                {/* Zing AI Executive Summary Card */}
+                                <div className="mb-8 p-1 rounded-2xl bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-transparent">
+                                    <div className="bg-black/80 backdrop-blur-xl border border-white/5 rounded-xl p-6">
+                                        <div className="flex items-center space-x-3 mb-4">
+                                            <div className="p-2 rounded-lg bg-cyan-500/10">
+                                                <Sparkles className="h-5 w-5 text-cyan-400" />
+                                            </div>
+                                            <h3 className="text-lg font-semibold text-white flex items-center">
+                                                Zin AI Executive Summary
+                                            </h3>
+                                        </div>
+
+                                        {isGeneratingAi ? (
+                                            <div className="flex items-center space-x-3 text-white/50 py-4">
+                                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-500"></div>
+                                                <span className="text-sm">Zin AI is analyzing the threat graph and generating an executive brief...</span>
+                                            </div>
+                                        ) : (
+                                            <div className="prose prose-invert max-w-none text-white/80 text-sm leading-relaxed whitespace-pre-wrap">
+                                                {aiSummary}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Summary Stats & Heatmap Grid */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-sm font-semibold uppercase text-white/50 tracking-wider">Breach Analysis</h3>
+                                            <button
+                                                onClick={handleReplayBreach}
+                                                disabled={isReplaying || compromisedInfrastructureCount === 0}
+                                                className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-widest flex items-center transition-all ${isReplaying || compromisedInfrastructureCount === 0 ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/10' : 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]'}`}
+                                            >
+                                                <Activity className={`h-3 w-3 mr-2 ${isReplaying ? 'animate-spin' : ''}`} />
+                                                {isReplaying ? 'Replaying...' : 'Replay Breach'}
+                                            </button>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="bg-gradient-to-br from-white/5 to-white/0 border border-white/10 rounded-xl p-5 flex flex-col justify-center relative overflow-hidden">
+                                                <div className="text-xs text-white/40 uppercase tracking-wider mb-2 font-bold z-10">Compromised Nodes</div>
+                                                <div className={`text-5xl font-light z-10 ${compromisedInfrastructureCount > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                                    {compromisedInfrastructureCount}
+                                                </div>
+                                                <Activity className="absolute -right-4 -bottom-4 h-24 w-24 text-white/[0.03] transform -rotate-12" />
+                                            </div>
+                                            <div className="bg-gradient-to-br from-white/5 to-white/0 border border-white/10 rounded-xl p-5 flex flex-col justify-center relative overflow-hidden">
+                                                <div className="text-xs text-white/40 uppercase tracking-wider mb-2 font-bold z-10">Critical Findings</div>
+                                                <div className={`text-5xl font-light z-10 ${simulationResults.findings.filter((f: any) => f.severity === 'Critical').length > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                                                    {simulationResults.findings.filter((f: any) => f.severity === 'Critical').length}
+                                                </div>
+                                                <ShieldAlert className="absolute -right-4 -bottom-4 h-24 w-24 text-white/[0.03] transform rotate-12" />
+                                            </div>
+                                            <div className="bg-gradient-to-r from-white/5 to-transparent border border-white/10 rounded-xl p-5 col-span-2 flex items-center justify-between group hover:bg-white/10 transition-colors cursor-default">
+                                                <div>
+                                                    <div className="text-xs text-white/40 uppercase tracking-wider mb-1 font-bold">Compliance Violations</div>
+                                                    <div className={`text-2xl font-light ${simulationResults.findings.filter((f: any) => f.complianceMappings.length > 0).length > 0 ? 'text-yellow-500' : 'text-emerald-500'}`}>
+                                                        {simulationResults.findings.filter((f: any) => f.complianceMappings.length > 0).length} Policy Gaps Detected
+                                                    </div>
+                                                </div>
+                                                <FileCheck className={`h-10 w-10 ${simulationResults.findings.filter((f: any) => f.complianceMappings.length > 0).length > 0 ? 'text-yellow-500/40 group-hover:text-yellow-500/60' : 'text-emerald-500/40 group-hover:text-emerald-500/60'} transition-colors`} />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Compliance Radar Chart */}
+                                    <div className="bg-[#0a0a0a] border border-white/5 rounded-xl p-4 relative overflow-hidden flex flex-col">
+                                        <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 flex items-center absolute top-4 left-4 z-10">
+                                            <ShieldAlert className="h-4 w-4 mr-2" /> Coverage Matrix
                                         </h3>
-                                    </div>
-
-                                    {isGeneratingAi ? (
-                                        <div className="flex items-center space-x-3 text-white/50 py-4">
-                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-500"></div>
-                                            <span className="text-sm">Zin AI is analyzing the threat graph and generating an executive brief...</span>
-                                        </div>
-                                    ) : (
-                                        <div className="prose prose-invert max-w-none text-white/80 text-sm leading-relaxed whitespace-pre-wrap">
-                                            {aiSummary}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Summary Stats & Heatmap Grid */}
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-
-                                <div className="space-y-6">
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-sm font-semibold uppercase text-white/50 tracking-wider">Breach Analysis</h3>
-                                        <button
-                                            onClick={handleReplayBreach}
-                                            disabled={isReplaying || simulationResults.compromisedNodes.length === 0}
-                                            className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-widest flex items-center transition-all ${isReplaying ? 'bg-red-500/20 text-red-500 cursor-not-allowed border border-red-500/30' : 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]'}`}
-                                        >
-                                            <Activity className={`h-3 w-3 mr-2 ${isReplaying ? 'animate-spin' : ''}`} />
-                                            {isReplaying ? 'Replaying...' : 'Replay Breach'}
-                                        </button>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-center">
-                                            <div className="text-xs text-white/40 uppercase tracking-wider mb-2">Compromised Nodes</div>
-                                            <div className="text-4xl font-light">{simulationResults.compromisedNodes.length}</div>
-                                        </div>
-                                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-center">
-                                            <div className="text-xs text-white/40 uppercase tracking-wider mb-2">Critical Findings</div>
-                                            <div className="text-4xl font-light text-red-500">{simulationResults.findings.filter(f => f.severity === 'Critical').length}</div>
-                                        </div>
-                                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 col-span-2 flex items-center justify-between">
-                                            <div>
-                                                <div className="text-xs text-white/40 uppercase tracking-wider mb-1">Compliance Violations</div>
-                                                <div className="text-2xl font-light text-yellow-500">{simulationResults.findings.filter(f => f.complianceMappings.length > 0).length} Policy Gaps Detected</div>
-                                            </div>
-                                            <FileCheck className="h-8 w-8 text-yellow-500/20" />
+                                        <div className="flex-1 w-full h-[250px] mt-6">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={complianceData}>
+                                                    <PolarGrid stroke="#333" />
+                                                    <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 10 }} />
+                                                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} stroke="#333" />
+                                                    <Radar name="Coverage %" dataKey="A" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.2} />
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: '#000', borderColor: '#333', borderRadius: '8px' }}
+                                                        itemStyle={{ color: '#06b6d4', fontWeight: 'bold' }}
+                                                    />
+                                                </RadarChart>
+                                            </ResponsiveContainer>
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* Compliance Radar Chart */}
-                                <div className="bg-[#0a0a0a] border border-white/5 rounded-xl p-4 relative overflow-hidden flex flex-col">
-                                    <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 flex items-center absolute top-4 left-4 z-10">
-                                        <ShieldAlert className="h-4 w-4 mr-2" /> Coverage Matrix
-                                    </h3>
-                                    <div className="flex-1 w-full h-[250px] mt-6">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <RadarChart cx="50%" cy="50%" outerRadius="70%" data={complianceData}>
-                                                <PolarGrid stroke="#333" />
-                                                <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 10 }} />
-                                                <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} stroke="#333" />
-                                                <Radar name="Coverage %" dataKey="A" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.2} />
-                                                <Tooltip
-                                                    contentStyle={{ backgroundColor: '#000', borderColor: '#333', borderRadius: '8px' }}
-                                                    itemStyle={{ color: '#06b6d4', fontWeight: 'bold' }}
-                                                />
-                                            </RadarChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Compliance Gap Table */}
-                            <div className="mb-8">
-                                <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 border-b border-white/10 pb-2 flex items-center">
-                                    <FileCheck className="h-4 w-4 mr-2" /> Compliance Framework Coverage
-                                </h3>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                        <thead>
-                                            <tr className="text-xs uppercase tracking-widest text-white/30 border-b border-white/5">
-                                                <th className="text-left py-2 pr-4">Framework</th>
-                                                <th className="text-left py-2 pr-4">Authority</th>
-                                                <th className="text-left py-2 pr-4">Coverage</th>
-                                                <th className="text-left py-2">Identified Gaps</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {complianceTableData.map((row, i) => (
-                                                <tr key={i} className="border-b border-white/5 hover:bg-white/3 transition-colors">
-                                                    <td className="py-2.5 pr-4 font-medium text-white/90">{row.framework}</td>
-                                                    <td className="py-2.5 pr-4 text-white/40">{row.authority}</td>
-                                                    <td className="py-2.5 pr-4">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="flex-1 h-1.5 bg-white/10 rounded-full max-w-[80px]">
-                                                                <div
-                                                                    className={`h-full rounded-full ${row.baseScore > 80 ? 'bg-emerald-500' : row.baseScore > 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                                                                    style={{ width: `${row.baseScore}%` }}
-                                                                />
-                                                            </div>
-                                                            <span className={`text-xs font-bold ${row.baseScore > 80 ? 'text-emerald-400' : row.baseScore > 60 ? 'text-yellow-400' : 'text-red-400'}`}>
-                                                                {row.baseScore}%
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="py-2.5">
-                                                        {row.gaps.length === 0 ? (
-                                                            <span className="text-xs text-emerald-400/70">✓ No gaps detected</span>
-                                                        ) : (
-                                                            <div className="flex flex-wrap gap-1">
-                                                                {[...new Set(row.gaps)].slice(0, 3).map((gap, gi) => (
-                                                                    <span key={gi} className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded">{gap}</span>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            {/* Attack Timeline */}
-                            {attackTimeline.length > 0 && (
+                                {/* Compliance Gap Table */}
                                 <div className="mb-8">
-                                    <h3 className="text-sm font-semibold uppercase text-red-400 tracking-wider mb-4 border-b border-red-500/20 pb-2 flex items-center">
-                                        <Activity className="h-4 w-4 mr-2 animate-pulse" /> Simulated Attack Timeline
+                                    <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 border-b border-white/10 pb-2 flex items-center">
+                                        <FileCheck className="h-4 w-4 mr-2" /> Compliance Framework Coverage
                                     </h3>
-                                    <div className="relative pl-4">
-                                        <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-red-500/50 to-transparent" />
-                                        <div className="space-y-4">
-                                            {attackTimeline.map((event, i) => (
-                                                <div key={i} className={`relative pl-6 transition-all`} style={{ animationDelay: `${i * 0.1}s` }}>
-                                                    <div className="absolute left-[-4px] top-1.5 w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
-                                                    <div className="flex items-start gap-3 bg-black/30 border border-white/5 rounded-lg p-3 hover:border-red-500/20 transition-colors">
-                                                        <span className="text-xs font-mono text-red-500/70 whitespace-nowrap mt-0.5 font-bold">[{event.time}]</span>
-                                                        <div>
-                                                            <div className={`text-sm font-semibold ${event.color}`}>{event.label}</div>
-                                                            <div className="text-xs text-white/40 mt-0.5">{event.desc}</div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="text-xs uppercase tracking-widest text-white/30 border-b border-white/5">
+                                                    <th className="text-left py-2 pr-4">Framework</th>
+                                                    <th className="text-left py-2 pr-4">Authority</th>
+                                                    <th className="text-left py-2 pr-4">Coverage</th>
+                                                    <th className="text-left py-2">Identified Gaps</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {complianceTableData.map((row, i) => (
+                                                    <tr key={i} className="border-b border-white/5 hover:bg-white/3 transition-colors">
+                                                        <td className="py-2.5 pr-4 font-medium text-white/90">{row.framework}</td>
+                                                        <td className="py-2.5 pr-4 text-white/40">{row.authority}</td>
+                                                        <td className="py-2.5 pr-4">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="flex-1 h-1.5 bg-white/10 rounded-full max-w-[80px]">
+                                                                    <div
+                                                                        className={`h-full rounded-full ${row.baseScore > 80 ? 'bg-emerald-500' : row.baseScore > 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                                                                        style={{ width: `${row.baseScore}%` }}
+                                                                    />
+                                                                </div>
+                                                                <span className={`text-xs font-bold ${row.baseScore > 80 ? 'text-emerald-400' : row.baseScore > 60 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                                                    {row.baseScore}%
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="py-2.5">
+                                                            {row.gaps.length === 0 ? (
+                                                                <span className="text-xs text-emerald-400/70">✓ No gaps detected</span>
+                                                            ) : (
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {[...new Set(row.gaps)].slice(0, 3).map((gap, gi) => (
+                                                                        <span key={gi} className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded">{gap}</span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 </div>
-                            )}
 
-                            {/* Detailed Findings Table */}
-                            <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 border-b border-white/10 pb-2 flex items-center">
-                                <Activity className="h-4 w-4 mr-2" /> Threat Vectors & Violations
-                            </h3>
-
-                            {simulationResults.findings.length === 0 ? (
-                                <div className="text-center py-12 bg-white/5 rounded-xl border border-white/10 border-dashed">
-                                    <Shield className="h-12 w-12 text-cyan-500/50 mx-auto mb-4" />
-                                    <p className="text-white font-medium">Zero Critical Exposures Detected</p>
-                                    <p className="text-sm text-white/50">Your architecture aligns with core compliance frameworks.</p>
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    {simulationResults.findings.map((finding: any, idx: number) => (
-                                        <div key={idx} className="bg-black/50 border border-white/10 rounded-xl p-4 flex flex-col gap-4">
-                                            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                                                <div className="flex items-start space-x-3">
-                                                    <div className={`mt-1 h-2 w-2 rounded-full ${finding.severity === 'Critical' ? 'bg-red-500 animate-pulse' : finding.severity === 'High' ? 'bg-orange-500' : 'bg-yellow-500'}`}></div>
-                                                    <div>
-                                                        <p className="text-white/90 text-sm font-medium">{finding.description}</p>
-                                                        <div className="flex flex-wrap gap-2 mt-2">
-                                                            {finding.complianceMappings.map((mapping: string, mapIdx: number) => (
-                                                                <span key={mapIdx} className="text-[10px] uppercase font-bold text-white/40 bg-white/5 px-2 py-0.5 rounded border border-white/10">
-                                                                    {mapping}
-                                                                </span>
-                                                            ))}
-                                                            {finding.mitreId && (
-                                                                <span className="text-[10px] uppercase font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 flex items-center shadow-[0_0_10px_rgba(168,85,247,0.2)]">
-                                                                    <Shield className="h-3 w-3 mr-1" />
-                                                                    {finding.mitreId}: {finding.mitreTactic} → {finding.mitreTechnique}
-                                                                </span>
-                                                            )}
+                                {/* Attack Timeline */}
+                                {attackTimeline.length > 0 && (
+                                    <div className="mb-8">
+                                        <h3 className="text-sm font-semibold uppercase text-white/50 tracking-wider mb-6 border-b border-white/10 pb-3 flex items-center">
+                                            <Activity className="h-4 w-4 mr-2" /> Simulated Attack Timeline
+                                        </h3>
+                                        <div className="relative pl-6 ml-2">
+                                            <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-red-500 via-orange-500/50 to-transparent opacity-30" />
+                                            <div className="space-y-6">
+                                                {attackTimeline.map((event, i) => (
+                                                    <div key={i} className={`relative pl-8 transition-all group`} style={{ animationDelay: `${i * 0.1}s` }}>
+                                                        <div className="absolute left-[-5px] top-1.5 w-2.5 h-2.5 rounded-full bg-black border-2 border-red-500 group-hover:bg-red-500 group-hover:shadow-[0_0_10px_rgba(239,68,68,0.8)] transition-all z-10" />
+                                                        <div className="flex flex-col md:flex-row md:items-center gap-4 bg-gradient-to-r from-white/[0.03] to-transparent border border-white/5 rounded-xl p-4 hover:border-red-500/30 transition-colors relative overflow-hidden">
+                                                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-red-500/50 to-orange-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                            <span className="text-[10px] font-mono text-red-500/50 whitespace-nowrap font-bold bg-red-500/10 px-2 py-1 rounded border border-red-500/20 self-start">[{event.time}]</span>
+                                                            <div>
+                                                                <div className={`text-[15px] font-bold ${event.color} mb-1 tracking-tight`}>{event.label}</div>
+                                                                <div className="text-sm text-white/60 leading-relaxed">{event.desc}</div>
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                </div>
-                                                <div className="flex-shrink-0">
-                                                    <span className={`text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full border ${finding.severity === 'Critical' ? 'bg-red-500/10 text-red-400 border-red-500/20' : finding.severity === 'High' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'}`}>
-                                                        {finding.severity}
-                                                    </span>
-                                                </div>
+                                                ))}
                                             </div>
+                                        </div>
+                                    </div>
+                                )}
 
-                                            {/* Auto-Remediation Code Block */}
-                                            {finding.remediationCode && (
-                                                <div className="mt-2 text-left bg-[#0d1117] border border-white/5 rounded-lg overflow-hidden group">
-                                                    <div className="flex items-center justify-between px-3 py-1.5 bg-white/5 border-b border-white/5">
-                                                        <span className="text-[10px] text-emerald-400 font-mono flex items-center tracking-widest uppercase font-bold">
-                                                            <Activity className="h-3 w-3 mr-1.5 animate-pulse" />
-                                                            Auto-Remediation (Terraform)
-                                                        </span>
-                                                        <span className="text-[10px] text-white/30 hidden group-hover:block uppercase tracking-wider">Infrastructure As Code</span>
+                                {/* Detailed Findings Table */}
+                                <h3 className="text-sm font-semibold uppercase text-cyan-400 tracking-wider mb-4 border-b border-white/10 pb-2 flex items-center">
+                                    <Activity className="h-4 w-4 mr-2" /> Threat Vectors & Violations
+                                </h3>
+
+                                {simulationResults.findings.length === 0 ? (
+                                    <div className="text-center py-12 bg-white/5 rounded-xl border border-white/10 border-dashed">
+                                        <Shield className="h-12 w-12 text-cyan-500/50 mx-auto mb-4" />
+                                        <p className="text-white font-medium">Zero Critical Exposures Detected</p>
+                                        <p className="text-sm text-white/50">Your architecture aligns with core compliance frameworks.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {simulationResults.findings.map((finding: any, idx: number) => (
+                                            <div key={idx} className={`bg-black/40 border border-white/5 rounded-xl p-5 flex flex-col gap-4 relative overflow-hidden group hover:bg-black/60 transition-colors ${finding.severity === 'Critical' ? 'border-l-4 border-l-red-500' :
+                                                finding.severity === 'High' ? 'border-l-4 border-l-orange-500' :
+                                                    'border-l-4 border-l-yellow-500'
+                                                }`}>
+                                                <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none transition-opacity group-hover:opacity-10">
+                                                    <ShieldAlert className="w-16 h-16" />
+                                                </div>
+                                                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 relative z-10">
+                                                    <div className="flex items-start space-x-3">
+                                                        <div className={`mt-1.5 h-2 w-2 rounded-full flex-shrink-0 ${finding.severity === 'Critical' ? 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]' : finding.severity === 'High' ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)]' : 'bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.8)]'}`}></div>
+                                                        <div>
+                                                            <p className="text-white/90 text-sm font-medium leading-relaxed">{finding.description}</p>
+                                                            <div className="flex flex-wrap gap-2 mt-3">
+                                                                {finding.complianceMappings.map((mapping: string, mapIdx: number) => (
+                                                                    <span key={mapIdx} className="text-[9px] uppercase font-bold text-white/50 bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                                                                        {mapping}
+                                                                    </span>
+                                                                ))}
+                                                                {finding.mitreId && (
+                                                                    <span className="text-[9px] uppercase font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 flex items-center shadow-[0_0_10px_rgba(168,85,247,0.1)]">
+                                                                        <Shield className="h-2.5 w-2.5 mr-1" />
+                                                                        {finding.mitreId}: {finding.mitreTactic} → {finding.mitreTechnique}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                    <div className="p-3 overflow-x-auto custom-scrollbar">
-                                                        <pre className="text-xs font-mono text-gray-300 whitespace-pre">
-                                                            <code>{finding.remediationCode}</code>
-                                                        </pre>
+                                                    <div className="flex-shrink-0">
+                                                        <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded flex items-center gap-1.5 ${finding.severity === 'Critical' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : finding.severity === 'High' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20'}`}>
+                                                            {finding.severity === 'Critical' && <Activity className="w-3 h-3 animate-pulse" />}
+                                                            {finding.severity}
+                                                        </span>
                                                     </div>
                                                 </div>
-                                            )}
 
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                                                {/* Auto-Remediation Code Block */}
+                                                {finding.remediationCode && (
+                                                    <div className="mt-2 text-left bg-[#0d1117] border border-white/5 rounded-lg overflow-hidden group">
+                                                        <div className="flex items-center justify-between px-3 py-1.5 bg-white/5 border-b border-white/5">
+                                                            <span className="text-[10px] text-emerald-400 font-mono flex items-center tracking-widest uppercase font-bold">
+                                                                <Activity className="h-3 w-3 mr-1.5 animate-pulse" />
+                                                                Auto-Remediation (Terraform)
+                                                            </span>
+                                                            <span className="text-[10px] text-white/30 hidden group-hover:block uppercase tracking-wider">Infrastructure As Code</span>
+                                                        </div>
+                                                        <div className="p-3 overflow-x-auto custom-scrollbar">
+                                                            <pre className="text-xs font-mono text-gray-300 whitespace-pre">
+                                                                <code>{finding.remediationCode}</code>
+                                                            </pre>
+                                                        </div>
+                                                    </div>
+                                                )}
 
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
 
             {/* AWS Deployment Results Overlay */}
@@ -1183,7 +1506,6 @@ function ArchitectContent() {
                                     )}
                                 </div>
                             </div>
-
                         </div>
                     </div>
                 )
@@ -1195,14 +1517,20 @@ function ArchitectContent() {
 export default function ArchitectPage() {
     return (
         <Suspense fallback={
-            <div className="flex h-[calc(100vh-8rem)] w-full items-center justify-center border border-white/10 rounded-xl bg-black shadow-2xl">
-                <div className="flex flex-col items-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500 mb-4"></div>
-                    <p className="text-white/50 text-sm">Loading architecture workspace...</p>
+            <div className="flex h-[calc(100vh-3.5rem)] w-full items-center justify-center bg-[#060606]">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="relative">
+                        <div className="h-12 w-12 rounded-full border border-white/10 flex items-center justify-center">
+                            <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-ping" />
+                        </div>
+                    </div>
+                    <p className="text-white/30 text-xs font-mono tracking-widest uppercase">Loading workspace...</p>
                 </div>
             </div>
         }>
-            <ArchitectContent />
+            <ReactFlowProvider>
+                <ArchitectContent />
+            </ReactFlowProvider>
         </Suspense>
     );
 }
