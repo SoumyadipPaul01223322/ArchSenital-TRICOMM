@@ -1645,7 +1645,7 @@ function ArchitectContent() {
                                         const PHASE_ATTACKS: Record<string, string[]> = {
                                             recon: ['Nmap SYN Scan', 'DNS Enumeration', 'OSINT / Shodan', 'Banner Grabbing', 'WHOIS Lookup'],
                                             access: ['SQL Injection', 'Phishing Email', 'Brute Force SSH/RDP', 'Exploit Public Service', 'Credential Stuffing'],
-                                            exec: ['Reverse Shell', 'PowerShell Payload', 'Macro Dropper', 'Living-off-the-Land (LOLBins)', 'Web Shell Upload'],
+                                            exec: ['Volumetric DDoS', 'Reverse Shell', 'PowerShell Payload', 'Macro Dropper', 'Living-off-the-Land (LOLBins)', 'Web Shell Upload'],
                                             privesc: ['Dirty COW (CVE-2016-5195)', 'SUID/SGID Abuse', 'Token Impersonation', 'Sudo Misconfiguration', 'Kernel Exploit'],
                                             exfil: ['DNS Tunneling', 'HTTP/S C2 Beacon', 'ICMP Covert Channel', 'Cloud Storage Exfil (S3)', 'FTP/SFTP Transfer'],
                                         };
@@ -1668,6 +1668,7 @@ function ArchitectContent() {
                                             if (!targetNode) { setAttackRunning(false); return; }
                                             const td = targetNode.data as any;
                                             // Architecture-wide controls
+                                            const hasCDN = nodes.some(n => (n.data as any)?.componentType === 'cdn' && (n.data as any)?.ddosProtection === true);
                                             const hasWAF = nodes.some(n => (n.data as any)?.componentType === 'cdn' || (n.data as any)?.componentType === 'waf' || (n.data as any)?.wafEnabled === true);
                                             const hasIDS = nodes.some(n => (n.data as any)?.enableIDS === true || (n.data as any)?.componentType === 'siem');
                                             const hasSIEM = nodes.some(n => (n.data as any)?.componentType === 'siem');
@@ -1689,7 +1690,9 @@ function ArchitectContent() {
 
                                             // ── PHASE 1: RECON ─────────────────────────────────────────
                                             const reconTech = PHASE_ATTACKS['recon'].includes(curVector) ? curVector : 'Nmap SYN Scan';
-                                            if (hasFW && hasIDS) {
+                                            if (curVector === 'Volumetric DDoS') {
+                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `Attacker orchestrated botnet. Identified target edge IP ${ip} [${tLabel}]. Measuring response capacity.` });
+                                            } else if (hasFW && hasIDS) {
                                                 log.push({ phase: '🔎 Recon', result: 'BLOCKED', detail: `Firewall + IDS active. ${reconTech} from attacker IP rate-limited and dropped. Target ${ip} shielded. 0 open ports returned to attacker.` });
                                             } else if (hasFW) {
                                                 log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `Firewall logged ${reconTech} targeting ${ip}. Alert raised. Rate-limited, partial results. No auto-block without IDS.` });
@@ -1700,7 +1703,9 @@ function ArchitectContent() {
                                             }
 
                                             // ── PHASE 2: INITIAL ACCESS ─────────────────────────────────
-                                            if (curVector === 'SQL Injection' && !webSvc && td.componentType !== 'api') {
+                                            if (curVector === 'Volumetric DDoS') {
+                                                log.push({ phase: '🚪 Initial Access', result: 'SUCCESS', detail: `DDoS requires no authentication. Initial SYN/UDP flood initiated against ${ip}. Botnet traffic ramping to 50 Gbps.` });
+                                            } else if (curVector === 'SQL Injection' && !webSvc && td.componentType !== 'api') {
                                                 log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `No web service on ${tLabel} — SQLi has no attack surface here. Invalid vector for target type (${td.componentType || 'unknown'}).` });
                                             } else if (curVector === 'SQL Injection' && hasWAF) {
                                                 log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF blocked SQLi on ${ip}. Rule: OWASP CRS SQL-001. POST body sanitized. ${dbSvc || 'Database'} access denied. Attacker IP auto-banned.` });
@@ -1722,7 +1727,15 @@ function ArchitectContent() {
                                             }
 
                                             // ── PHASE 3: EXECUTION ──────────────────────────────────────
-                                            if (hasEDR && hasIDS) {
+                                            if (curVector === 'Volumetric DDoS') {
+                                                if (hasCDN) {
+                                                    log.push({ phase: '⚙️ Execution', result: 'BLOCKED', detail: `Cloudflare/CDN absorbed 50 Gbps volumetric flood targeting ${ip}. Anycast network distributed load. Origin server ${tLabel} unaffected.` });
+                                                } else if (hasFW && hasIDS) {
+                                                    log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `IDS detected extreme inbound SYN/UDP anomaly. Firewall overwhelmed and dropping some state tables. ${tLabel} experiencing severe latency but still routing.` });
+                                                } else {
+                                                    log.push({ phase: '⚙️ Execution', result: 'SUCCESS', detail: `Volumetric flood hit ${tLabel} (${ip}) directly at 50 Gbps. Network interface saturated. Complete denial of service.` });
+                                                }
+                                            } else if (hasEDR && hasIDS) {
                                                 log.push({ phase: '⚙️ Execution', result: 'BLOCKED', detail: `EDR quarantined payload at memory-injection on ${tLabel}. SIEM correlated the attempt. Process chain killed. IOC added to blocklist.` });
                                             } else if (hasLocalFW && hasIDS) {
                                                 log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `IDS flagged C2 beacon on ${ip}. Alert: Critical. Outbound blocked by local FW. SOC investigating. Backdoor unstable.` });
@@ -1733,7 +1746,13 @@ function ArchitectContent() {
                                             }
 
                                             // ── PHASE 4: PRIVILEGE ESCALATION ───────────────────────────
-                                            if (hasEDR && strongAuth) {
+                                            if (curVector === 'Volumetric DDoS') {
+                                                if (hasCDN) {
+                                                    log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `DDoS attack mitigated. No privilege escalation attempted or needed.` });
+                                                } else {
+                                                    log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `No privilege required to disrupt service. Target ${tLabel} crashed; services stopped responding (OOM/CPU exhaustion).` });
+                                                }
+                                            } else if (hasEDR && strongAuth) {
                                                 log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `Credential Guard + EDR blocked LSASS dump & token impersonation on ${tLabel}. Mimikatz terminated. No privilege obtained.` });
                                             } else if (strongAuth) {
                                                 log.push({ phase: '⬆️ Priv Esc', result: 'DETECTED', detail: `Strong auth resisted standard priv-esc on ${tLabel}. Partial access via ${os.includes('Win') ? 'named pipe impersonation' : 'SUID binary'} — limited priv only. EDR alert fired.` });
@@ -1744,7 +1763,13 @@ function ArchitectContent() {
                                             }
 
                                             // ── PHASE 5: EXFILTRATION ────────────────────────────────────
-                                            if (hasSIEM && encrypted) {
+                                            if (curVector === 'Volumetric DDoS') {
+                                                if (hasCDN) {
+                                                    log.push({ phase: '📤 Exfil', result: 'BLOCKED', detail: `DDoS mitigated by infrastructure. Service remains available. No data breached.` });
+                                                } else {
+                                                    log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `DDoS attack successful. Target ${tLabel} offline. Estimated downtime: highly elevated. No data exfiltrated, entirely disruptive.` });
+                                                }
+                                            } else if (hasSIEM && encrypted) {
                                                 log.push({ phase: '📤 Exfil', result: 'BLOCKED', detail: `SIEM DLP: anomalous outbound volume from ${ip} exceeded threshold. All egress blocked at FW. ${dbSvc ? dbSvc + ' data ' : 'Data '}secured. Incident #INC-${Math.floor(Math.random() * 9000 + 1000)} opened.` });
                                             } else if (hasSIEM) {
                                                 log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `SIEM flagged anomalous DNS TXT from ${ip}. ~47MB blocked post-alert. ~2.1MB partial exfil. Forensic capture started.` });
