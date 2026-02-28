@@ -1047,6 +1047,43 @@ function ArchitectContent() {
         event.dataTransfer.effectAllowed = 'move';
     };
 
+    // ── Import / Export ──────────────────────────────────────────────────────
+    const importInputRef = useRef<HTMLInputElement>(null);
+
+    const exportArchitecture = useCallback(() => {
+        const payload = { version: '1.0', exportedAt: new Date().toISOString(), nodes, edges };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `archsentinel-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }, [nodes, edges]);
+
+    const importArchitecture = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const json = JSON.parse(ev.target?.result as string);
+                if (!Array.isArray(json.nodes) || !Array.isArray(json.edges)) {
+                    alert('Invalid ArchSentinel JSON — missing nodes or edges array.');
+                    return;
+                }
+                setNodes(json.nodes);
+                setEdges(json.edges);
+                setSelectedNode(null);
+            } catch {
+                alert('Failed to parse JSON file. Please use a valid ArchSentinel export.');
+            }
+        };
+        reader.readAsText(file);
+        // Reset so same file can be re-imported
+        e.target.value = '';
+    }, [setNodes, setEdges]);
+
     return (
         <div className="flex h-[calc(100vh-8rem)] w-full border border-white/10 rounded-xl overflow-hidden shadow-2xl">
 
@@ -1060,9 +1097,26 @@ function ArchitectContent() {
                             <h3 className="text-xs font-bold text-white uppercase tracking-[0.15em]">Architecture Builder</h3>
                             <p className="text-[10px] text-white/30 mt-0.5">Drag components onto the canvas</p>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            <span className="text-[10px] text-emerald-400/70 font-mono">LIVE</span>
+                        <div className="flex items-center gap-2">
+                            {/* Import */}
+                            <button
+                                onClick={() => importInputRef.current?.click()}
+                                title="Import architecture from JSON"
+                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-cyan-500/10 border border-white/8 hover:border-cyan-500/30 text-white/40 hover:text-cyan-400 text-[9px] font-bold uppercase tracking-wider transition-all duration-200"
+                            >
+                                <span className="text-sm leading-none">↑</span> Import
+                            </button>
+                            {/* Export */}
+                            <button
+                                onClick={exportArchitecture}
+                                disabled={nodes.length === 0}
+                                title="Export architecture as JSON"
+                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-emerald-500/10 border border-white/8 hover:border-emerald-500/30 text-white/40 hover:text-emerald-400 disabled:opacity-30 text-[9px] font-bold uppercase tracking-wider transition-all duration-200"
+                            >
+                                <span className="text-sm leading-none">↓</span> Export
+                            </button>
+                            {/* Hidden file input */}
+                            <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={importArchitecture} />
                         </div>
                     </div>
 
@@ -1119,79 +1173,74 @@ function ArchitectContent() {
                             <ComponentCategory key={label} label={label} items={filtered} onDragStart={onDragStart} />
                         );
                     })}
-
-                    {/* Tips card */}
-                    <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-xl p-3">
-                        <div className="flex items-start gap-2">
-                            <Zap className="h-3 w-3 text-cyan-400 mt-0.5 flex-shrink-0" />
-                            <div>
-                                <p className="text-[10px] text-cyan-300/70 font-semibold mb-1">Pro Tip</p>
-                                <p className="text-[9px] text-white/30 leading-relaxed">Connect nodes with edges to simulate lateral movement. Configure each node&apos;s security properties via the right panel.</p>
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
                 {/* Bottom CTA Area */}
-                <div className="p-3 border-t border-white/8 bg-gradient-to-t from-black/50 to-transparent space-y-2">
-                    <button
-                        onClick={handleSaveAndSimulate}
-                        disabled={isSimulating}
-                        className="w-full relative overflow-hidden bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 disabled:opacity-40 text-white py-3 rounded-xl font-semibold text-sm shadow-[0_0_20px_rgba(220,38,38,0.3)] flex items-center justify-center transition-all duration-200 hover:shadow-[0_0_30px_rgba(220,38,38,0.5)] group"
-                    >
-                        <ShieldAlert className={`h-4 w-4 mr-2 ${isSimulating ? 'animate-pulse' : 'group-hover:animate-bounce'}`} />
-                        {isSimulating ? (
-                            <span className="flex items-center gap-2">
-                                <span className="h-1.5 w-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <span className="h-1.5 w-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                <span className="h-1.5 w-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                                <span className="ml-1">Running DFS Engine</span>
-                            </span>
-                        ) : 'Save & Simulate Threat'}
-                    </button>
+                <div className="border-t border-white/8 bg-gradient-to-t from-black/60 via-black/30 to-transparent">
 
-                    <button
-                        onClick={handleDeployToAWS}
-                        disabled={isDeploying}
-                        className="w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-orange-500/30 disabled:opacity-40 text-white/70 hover:text-white py-2.5 rounded-xl font-medium text-xs flex items-center justify-center transition-all duration-200"
-                    >
-                        <Cloud className={`h-3.5 w-3.5 mr-2 text-orange-400 ${isDeploying ? 'animate-spin' : ''}`} />
-                        {isDeploying ? 'Provisioning AWS...' : 'Deploy Infrastructure'}
-                    </button>
+                    {/* Action buttons */}
+                    <div className="p-3 space-y-1.5">
+                        <button
+                            onClick={handleSaveAndSimulate}
+                            disabled={isSimulating}
+                            className="w-full relative overflow-hidden bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 disabled:opacity-40 text-white py-2.5 rounded-xl font-bold text-xs shadow-[0_0_20px_rgba(220,38,38,0.3)] flex items-center justify-center transition-all duration-200 hover:shadow-[0_0_30px_rgba(220,38,38,0.5)] group tracking-wide uppercase"
+                        >
+                            <ShieldAlert className={`h-3.5 w-3.5 mr-2 ${isSimulating ? 'animate-pulse' : 'group-hover:animate-bounce'}`} />
+                            {isSimulating ? (
+                                <span className="flex items-center gap-2">
+                                    <span className="h-1.5 w-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                    <span className="h-1.5 w-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                    <span className="h-1.5 w-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                    <span className="ml-1">Running DFS Engine</span>
+                                </span>
+                            ) : 'Save & Simulate Threat'}
+                        </button>
 
-                    <button
-                        onClick={handleSyncDns}
-                        disabled={isSyncingDns}
-                        className="w-full bg-cyan-950/20 hover:bg-cyan-900/40 border border-cyan-500/20 hover:border-cyan-500/50 disabled:opacity-40 text-cyan-400 hover:text-cyan-300 py-2.5 rounded-xl font-medium text-xs flex items-center justify-center transition-all duration-200"
-                    >
-                        <Globe className={`h-3.5 w-3.5 mr-2 text-cyan-400 ${isSyncingDns ? 'animate-spin' : ''}`} />
-                        {isSyncingDns ? 'Syncing Telemetry...' : 'Sync AWS Route 53 Telemetry'}
-                    </button>
+                        <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                                onClick={handleDeployToAWS}
+                                disabled={isDeploying}
+                                className="bg-white/5 hover:bg-orange-950/30 border border-white/8 hover:border-orange-500/30 disabled:opacity-40 text-white/60 hover:text-orange-300 py-2 rounded-xl font-medium text-[10px] flex items-center justify-center transition-all duration-200"
+                            >
+                                <Cloud className={`h-3 w-3 mr-1.5 text-orange-400 ${isDeploying ? 'animate-spin' : ''}`} />
+                                {isDeploying ? 'Deploying...' : 'Deploy AWS'}
+                            </button>
 
-                    <button
-                        onClick={() => setShowAttackPanel(v => !v)}
-                        className={`w-full border py-2.5 rounded-xl font-medium text-xs flex items-center justify-center transition-all duration-200 group ${showAttackPanel ? 'bg-rose-900/40 border-rose-500/50 text-rose-300' : 'bg-rose-950/20 hover:bg-rose-900/30 border-rose-500/20 hover:border-rose-500/40 text-rose-400 hover:text-rose-300'}`}
-                    >
-                        <ShieldAlert className={`h-3.5 w-3.5 mr-2 ${showAttackPanel ? 'text-rose-300 animate-pulse' : 'text-rose-400'}`} />
-                        {showAttackPanel ? 'Hide Attack Simulator' : '⚡ Attack Scenarios'}
-                    </button>
-
-                    {/* Error Banner */}
-                    {simulationError && (
-                        <div className="bg-red-950/80 border border-red-500/30 rounded-xl p-3 flex items-start gap-2">
-                            <ShieldAlert className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-                            <div className="flex-1 min-w-0">
-                                <p className="text-[10px] text-red-300 font-semibold mb-0.5">Action Required</p>
-                                <p className="text-[9px] text-red-400/80 leading-relaxed">{simulationError}</p>
-                            </div>
-                            <button onClick={() => setSimulationError(null)} className="text-red-500/50 hover:text-red-400 text-xs leading-none flex-shrink-0">✕</button>
+                            <button
+                                onClick={handleSyncDns}
+                                disabled={isSyncingDns}
+                                className="bg-white/5 hover:bg-cyan-950/30 border border-white/8 hover:border-cyan-500/30 disabled:opacity-40 text-white/60 hover:text-cyan-300 py-2 rounded-xl font-medium text-[10px] flex items-center justify-center transition-all duration-200"
+                            >
+                                <Globe className={`h-3 w-3 mr-1.5 text-cyan-400 ${isSyncingDns ? 'animate-spin' : ''}`} />
+                                {isSyncingDns ? 'Syncing...' : 'Sync Route 53'}
+                            </button>
                         </div>
-                    )}
 
-                    <div className="flex items-center justify-center gap-1.5 pt-1">
-                        <div className="h-1 w-1 rounded-full bg-white/15" />
-                        <span className="text-[9px] text-white/20 font-mono">ArchSentinel Enterprise v1.0</span>
-                        <div className="h-1 w-1 rounded-full bg-white/15" />
+
+                        {/* Error Banner */}
+                        {simulationError && (
+                            <div className="bg-red-950/80 border border-red-500/30 rounded-xl p-2.5 flex items-start gap-2">
+                                <ShieldAlert className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[10px] text-red-300 font-semibold mb-0.5">Action Required</p>
+                                    <p className="text-[9px] text-red-400/80 leading-relaxed">{simulationError}</p>
+                                </div>
+                                <button onClick={() => setSimulationError(null)} className="text-red-500/50 hover:text-red-400 text-xs leading-none flex-shrink-0">✕</button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Status footer */}
+                    <div className="px-3 py-2 border-t border-white/5 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span className="text-[8px] text-white/20 font-mono uppercase tracking-widest">ArchSentinel v1.0</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            {[{ label: 'LOW', cls: 'bg-emerald-500/20 text-emerald-400' }, { label: 'MED', cls: 'bg-yellow-500/20 text-yellow-400' }, { label: 'HIGH', cls: 'bg-red-500/20 text-red-400' }].map(b => (
+                                <span key={b.label} className={`text-[6px] font-bold px-1 py-0.5 rounded ${b.cls} uppercase tracking-wider`}>{b.label}</span>
+                            ))}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1556,21 +1605,278 @@ function ArchitectContent() {
                                         </Sec>
                                     </div>;
 
-                                    // ── ATTACKER MACHINE ──────────────────────────────
-                                    if (ct === 'attacker') return <div className="space-y-4">
-                                        <Sec icon={ShieldAlert} title="Threat Actor Toolkit">
-                                            <Sel field="attackerOs" label="Offensive OS" options={['Kali Linux', 'Parrot OS', 'Commando VM', 'Custom Botnet C2']} defaultVal="Kali Linux" />
-                                        </Sec>
-                                        <Sec icon={Activity} title="Pre-Installed Tooling">
-                                            <Toggle field="nmap" label="Nmap / Masscan" defaultVal={true} />
-                                            <Toggle field="metasploit" label="Metasploit Framework" defaultVal={true} />
-                                            <Toggle field="mimikatz" label="Mimikatz / Impacket" defaultVal={true} />
-                                        </Sec>
-                                        <Sec icon={Globe} title="Network Position">
-                                            <TxtInput field="ipAddress" label="Spoofed/Real IP" placeholder="203.0.113.66" />
-                                            <Sel field="networkContext" label="Context Location" options={['External (Internet)', 'Internal (Compromised VDI)', 'DMZ Hijack']} defaultVal="External (Internet)" />
-                                        </Sec>
-                                    </div>;
+                                    // ── ATTACKER MACHINE ─ 5-Phase Hacking Orchestrator ────────
+                                    if (ct === 'attacker') {
+                                        const PHASES = [
+                                            { id: 'recon', label: 'Recon', emoji: '🔎', mitre: 'TA0043' },
+                                            { id: 'access', label: 'Initial Access', emoji: '🚪', mitre: 'TA0001' },
+                                            { id: 'exec', label: 'Execution', emoji: '⚙️', mitre: 'TA0002' },
+                                            { id: 'privesc', label: 'Priv Esc', emoji: '⬆️', mitre: 'TA0004' },
+                                            { id: 'exfil', label: 'Exfil', emoji: '📤', mitre: 'TA0010' },
+                                        ];
+                                        const PHASE_ATTACKS: Record<string, string[]> = {
+                                            recon: ['Nmap SYN Scan', 'DNS Enumeration', 'OSINT / Shodan', 'Banner Grabbing', 'WHOIS Lookup'],
+                                            access: ['SQL Injection', 'Phishing Email', 'Brute Force SSH/RDP', 'Exploit Public Service', 'Credential Stuffing'],
+                                            exec: ['Reverse Shell', 'PowerShell Payload', 'Macro Dropper', 'Living-off-the-Land (LOLBins)', 'Web Shell Upload'],
+                                            privesc: ['Dirty COW (CVE-2016-5195)', 'SUID/SGID Abuse', 'Token Impersonation', 'Sudo Misconfiguration', 'Kernel Exploit'],
+                                            exfil: ['DNS Tunneling', 'HTTP/S C2 Beacon', 'ICMP Covert Channel', 'Cloud Storage Exfil (S3)', 'FTP/SFTP Transfer'],
+                                        };
+
+                                        const attackerPhase: string = d.attackPhase || 'recon';
+                                        const attackerVector = d.attackVector || PHASE_ATTACKS[attackerPhase][0];
+                                        const selectedTargetId: string = d.targetNodeId || '';
+                                        const attackLog: { phase: string; result: 'SUCCESS' | 'BLOCKED' | 'DETECTED'; detail: string; color: string }[] = d.attackLog || [];
+                                        const isRunning: boolean = d.attackRunning || false;
+
+                                        const nonAttackerNodes = nodes.filter(n => (n.data as any)?.componentType !== 'attacker');
+                                        const targetNode = nodes.find(n => n.id === selectedTargetId) || nonAttackerNodes[0];
+
+                                        // Config-aware attack evaluator
+                                        const evaluateAttack = () => {
+                                            if (!targetNode) return;
+                                            const td = targetNode.data as any;
+                                            const hasWAF = nodes.some(n => (n.data as any)?.componentType === 'cdn' || (n.data as any)?.wafEnabled);
+                                            const hasIDS = nodes.some(n => (n.data as any)?.enableIDS || (n.data as any)?.componentType === 'siem');
+                                            const hasFW = nodes.some(n => (n.data as any)?.componentType === 'firewall' && (n.data as any)?.defaultPolicy !== 'Default Allow (Insecure)');
+                                            const encrypted = td.encryptionAtRest || td.tlsEnforced || td.tlsSyslog;
+                                            const strongAuth = (td.authMethod || '').includes('Key-based') || (td.authMethod || '').includes('Active Directory');
+                                            const hasLocalFW = td.localFirewall !== false;
+                                            const ip = td.ipAddress || '?.?.?.?';
+                                            const os = td.os || td.osFamily || 'Linux';
+                                            const webSvc = td.webService && td.webService !== 'None' ? td.webService : '';
+                                            const dbSvc = td.dbService && td.dbService !== 'None' ? td.dbService : '';
+                                            const tLabel = (td.label as string) || targetNode.id;
+
+                                            const log: typeof attackLog = [];
+                                            const curPhase = d.attackPhase || 'recon';
+                                            const curVector = d.attackVector || PHASE_ATTACKS[curPhase][0];
+
+                                            // ── Phase 1: Recon ──
+                                            if (hasFW || hasIDS) {
+                                                log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `IDS/Firewall detected ${curVector === 'Nmap SYN Scan' ? 'SYN flood from ' + (d.ipAddress || 'attacker') : 'probe'} targeting ${ip}. Alert raised. Scan throttled.`, color: '#f59e0b' });
+                                            } else {
+                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `${curVector} completed on ${ip} [${tLabel}]. OS: ${os}. Open ports: ${td.customPorts || '22,80,443'}. ${webSvc ? webSvc + ' detected.' : ''}`, color: '#10b981' });
+                                            }
+
+                                            // ── Phase 2: Initial Access ──
+                                            if (hasWAF && curVector === 'SQL Injection') {
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF intercepted SQLi payload on ${ip}. Rule: OWASP CRS SQL-001. Request dropped. No DB access gained.`, color: '#ef4444' });
+                                            } else if (strongAuth && (curVector === 'Brute Force SSH/RDP' || curVector === 'Credential Stuffing')) {
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} uses key-based auth. Password spray failed. 0 valid creds found after 10,000 attempts.`, color: '#ef4444' });
+                                            } else {
+                                                const accessDetail = curVector === 'SQL Injection'
+                                                    ? `SQLi on ${ip}: POST /login → username=admin'--&password=x → ${dbSvc || 'DB'} returned error. Auth bypass succeeded. Session token obtained.`
+                                                    : curVector === 'Phishing Email'
+                                                        ? `Spear-phishing sent to ${tLabel} user. Payload: .docm macro. ${os.includes('Windows') ? 'PowerShell dropper launched.' : 'Bash reverse shell triggered.'} Callback to C2.`
+                                                        : `${curVector} executed on ${tLabel} (${ip}, ${os}). Foothold established.`;
+                                                log.push({ phase: '🚪 Initial Access', result: 'SUCCESS', detail: accessDetail, color: '#f97316' });
+                                            }
+
+                                            // ── Phase 3: Execution ──
+                                            const execBlocked = hasLocalFW && hasIDS;
+                                            if (execBlocked) {
+                                                log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `SIEM/IDS flagged ${d.attackVector || 'reverse shell'} beacon to C2. Process: cmd.exe → powershell.exe. Alert: High. Execution partially sandboxed.`, color: '#f59e0b' });
+                                            } else {
+                                                log.push({ phase: '⚙️ Execution', result: 'SUCCESS', detail: `${d.execPayload || curVector} ran on ${tLabel} (${os}). Persistent cron/Task Scheduler backdoor set. C2 heartbeat: 30s.`, color: '#f97316' });
+                                            }
+
+                                            // ── Phase 4: Privilege Escalation ──
+                                            if (os.includes('Windows') && strongAuth) {
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `Token impersonation blocked by Windows Defender Credential Guard on ${tLabel}. Admin tokens protected.`, color: '#ef4444' });
+                                            } else {
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `${os.includes('Win') ? 'Token impersonation via SeImpersonatePrivilege (PrintSpoofer)' : 'Dirty COW exploit compiled in-memory. /etc/passwd written'}. Root/SYSTEM on ${ip}.`, color: '#f97316' });
+                                            }
+
+                                            // ── Phase 5: Exfil ──
+                                            if (hasIDS && encrypted) {
+                                                log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `Anomalous outbound DNS TXT traffic from ${ip} detected by SIEM. 47MB blocked. Partial exfil: ~2.1MB before alert. Incident created.`, color: '#f59e0b' });
+                                            } else if (encrypted && !hasIDS) {
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Encrypted exfil via HTTPS C2. Data: ${dbSvc ? dbSvc + ' dump, ' : ''}SSH keys, /etc/shadow. 2.3GB transferred. No SIEM alert — logs not monitored.`, color: '#f97316' });
+                                            } else {
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP dump from ${ip}. ${td.sensitivityLevel > 3 ? 'HIGH-SENSITIVITY' : 'MEDIUM-SENSITIVITY'} data: ${dbSvc ? dbSvc + ' records, ' : ''}PII CSV. 47,000+ records exfiltrated.`, color: '#ef4444' });
+                                            }
+
+                                            // Animate nodes
+                                            const successTargets = [targetNode.id];
+                                            nodes.forEach(n => {
+                                                const nd = n.data as any;
+                                                if (nd.componentType !== 'attacker') {
+                                                    setNodes(nds => nds.map(node => node.id === n.id ? {
+                                                        ...node,
+                                                        style: { ...node.style, border: '2px solid #ef4444', boxShadow: '0 0 25px rgba(239,68,68,0.6)', transition: 'all 0.5s ease' }
+                                                    } : node));
+                                                }
+                                            });
+                                            setTimeout(() => {
+                                                nodes.forEach(n => {
+                                                    if (n.data && (n.data as any).componentType !== 'attacker') {
+                                                        const isBlocked = log.some(l => l.result === 'BLOCKED' || l.result === 'DETECTED');
+                                                        setNodes(nds => nds.map(node => node.id === n.id ? {
+                                                            ...node,
+                                                            style: { ...node.style, border: isBlocked ? '2px solid #10b981' : '2px solid #ef4444', boxShadow: isBlocked ? '0 0 20px rgba(16,185,129,0.5)' : '0 0 20px rgba(239,68,68,0.5)', transition: 'all 0.5s ease' }
+                                                        } : node));
+                                                    }
+                                                });
+                                            }, 3000);
+
+                                            updateNodeData('attackLog', log);
+                                            updateNodeData('attackRunning', false);
+                                        };
+
+                                        const launchAttack = () => {
+                                            if (!targetNode) return;
+                                            updateNodeData('attackLog', []);
+                                            updateNodeData('attackRunning', true);
+                                            setTimeout(evaluateAttack, 1200);
+                                        };
+
+                                        return <div className="space-y-4 text-white">
+                                            {/* Header */}
+                                            <div className="flex items-center gap-3 p-3 rounded-xl bg-rose-950/30 border border-rose-500/20">
+                                                <div className="p-2 rounded-lg bg-rose-500/10">
+                                                    <ShieldAlert className="h-4 w-4 text-rose-400" />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <div className="text-xs font-bold text-rose-300 uppercase tracking-wider">Attack Orchestrator</div>
+                                                    <div className="text-[9px] text-white/30 font-mono mt-0.5">MITRE ATT&CK® Framework · {nonAttackerNodes.length} reachable targets</div>
+                                                </div>
+                                                <div className="text-[8px] font-mono bg-rose-500/10 border border-rose-500/20 rounded px-2 py-1 text-rose-400">v4 kills</div>
+                                            </div>
+
+                                            {/* Attacker OS & Tools */}
+                                            <Sec icon={Terminal} title="Attacker Profile">
+                                                <Sel field="attackerOs" label="Offensive OS" options={['Kali Linux', 'Parrot OS', 'Commando VM', 'Custom Botnet C2']} defaultVal="Kali Linux" />
+                                                <Sel field="networkContext" label="Position" options={['External (Internet)', 'Internal (Compromised VDI)', 'DMZ Hijack']} defaultVal="External (Internet)" />
+                                                <TxtInput field="ipAddress" label="Attacker IP" placeholder="203.0.113.66" />
+                                            </Sec>
+
+                                            {/* Phase Tabs */}
+                                            <div>
+                                                <div className="text-[10px] text-white/40 uppercase tracking-wider font-semibold mb-2 flex items-center gap-2">
+                                                    <span className="h-px flex-1 bg-white/8" />
+                                                    Attack Phase Selection
+                                                    <span className="h-px flex-1 bg-white/8" />
+                                                </div>
+                                                <div className="grid grid-cols-5 gap-1">
+                                                    {PHASES.map(ph => (
+                                                        <button
+                                                            key={ph.id}
+                                                            onClick={() => { updateNodeData('attackPhase', ph.id); updateNodeData('attackVector', PHASE_ATTACKS[ph.id][0]); updateNodeData('attackLog', []); }}
+                                                            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-center transition-all duration-200 ${attackerPhase === ph.id
+                                                                ? 'bg-rose-950/60 border-rose-500/60 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
+                                                                : 'bg-white/3 border-white/8 hover:bg-white/6 hover:border-white/15'
+                                                                }`}
+                                                        >
+                                                            <span className="text-sm">{ph.emoji}</span>
+                                                            <span className={`text-[7px] font-bold leading-tight uppercase tracking-wide ${attackerPhase === ph.id ? 'text-rose-300' : 'text-white/30'}`}>{ph.label}</span>
+                                                            <span className="text-[6px] text-white/20 font-mono">{ph.mitre}</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Attack Vector for selected phase */}
+                                            <Sec icon={Zap} title={`${PHASES.find(p => p.id === attackerPhase)?.emoji} ${PHASES.find(p => p.id === attackerPhase)?.label} Techniques`}>
+                                                <div className="space-y-1">
+                                                    {PHASE_ATTACKS[attackerPhase].map(v => (
+                                                        <button
+                                                            key={v}
+                                                            onClick={() => { updateNodeData('attackVector', v); updateNodeData('attackLog', []); }}
+                                                            className={`w-full text-left px-3 py-2 rounded-lg border text-xs transition-all duration-150 ${attackerVector === v
+                                                                ? 'bg-rose-950/50 border-rose-500/40 text-rose-200 font-semibold'
+                                                                : 'bg-white/3 border-white/6 text-white/50 hover:text-white/80 hover:bg-white/6'
+                                                                }`}
+                                                        >
+                                                            <span className="font-mono text-[9px] text-rose-500/70 mr-2">{attackerVector === v ? '▶' : '○'}</span>
+                                                            {v}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </Sec>
+
+                                            {/* Target Selector */}
+                                            <Sec icon={Globe} title="Select Target Node">
+                                                {nonAttackerNodes.length === 0 ? (
+                                                    <div className="text-[10px] text-white/30 text-center py-4">Drop components onto the canvas to create attack targets.</div>
+                                                ) : (
+                                                    <div className="space-y-1">
+                                                        {nonAttackerNodes.map(n => {
+                                                            const nd = n.data as any;
+                                                            const isSelected = selectedTargetId === n.id || (!selectedTargetId && n.id === nonAttackerNodes[0]?.id);
+                                                            return (
+                                                                <button
+                                                                    key={n.id}
+                                                                    onClick={() => updateNodeData('targetNodeId', n.id)}
+                                                                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border transition-all duration-150 text-left ${isSelected
+                                                                        ? 'bg-cyan-950/40 border-cyan-500/40 text-cyan-200'
+                                                                        : 'bg-white/3 border-white/6 text-white/50 hover:text-white/80 hover:bg-white/5'
+                                                                        }`}
+                                                                >
+                                                                    <span className="text-xs">{isSelected ? '🎯' : '○'}</span>
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <div className="text-[11px] font-semibold truncate">{nd.label as string}</div>
+                                                                        <div className="text-[9px] text-white/30 font-mono">{nd.ipAddress || nd.componentType} · {nd.os || nd.osFamily || nd.componentType}</div>
+                                                                    </div>
+                                                                    {isSelected && <span className="text-[8px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono">TARGET</span>}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </Sec>
+
+                                            {/* Launch Button */}
+                                            <button
+                                                onClick={launchAttack}
+                                                disabled={isRunning || nonAttackerNodes.length === 0}
+                                                className="w-full py-3 rounded-xl font-bold text-sm uppercase tracking-widest bg-gradient-to-r from-rose-700 to-red-600 hover:from-rose-600 hover:to-red-500 disabled:opacity-40 text-white shadow-[0_0_25px_rgba(239,68,68,0.4)] hover:shadow-[0_0_40px_rgba(239,68,68,0.6)] transition-all duration-200 flex items-center justify-center gap-2"
+                                            >
+                                                {isRunning ? (
+                                                    <><span className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full" /><span>Running...</span></>
+                                                ) : (
+                                                    <><ShieldAlert className="h-4 w-4" /><span>⚡ Launch {attackerVector}</span></>
+                                                )}
+                                            </button>
+
+                                            {/* Kill Chain Results */}
+                                            {attackLog.length > 0 && (
+                                                <div className="rounded-xl border border-white/8 overflow-hidden">
+                                                    <div className="px-3 py-2 bg-black/60 border-b border-white/6 flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <Terminal className="h-3 w-3 text-rose-400" />
+                                                            <span className="text-[10px] font-mono text-white/50 uppercase tracking-wider">Kill Chain Results</span>
+                                                        </div>
+                                                        <button onClick={() => updateNodeData('attackLog', [])} className="text-white/20 hover:text-white/50 text-[10px]">Clear</button>
+                                                    </div>
+                                                    <div className="divide-y divide-white/5 bg-black/40">
+                                                        {attackLog.map((entry, i) => (
+                                                            <div key={i} className="px-3 py-2.5 flex gap-3 items-start">
+                                                                <div className="flex-shrink-0 mt-0.5">
+                                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${entry.result === 'SUCCESS' ? 'bg-rose-500/20 text-rose-400' :
+                                                                        entry.result === 'BLOCKED' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                                            'bg-yellow-500/20 text-yellow-400'
+                                                                        }`}>{entry.result === 'SUCCESS' ? '✖ HIT' : entry.result === 'BLOCKED' ? '✔ BLOCKED' : '⚠ DETECT'}</span>
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="text-[10px] font-bold text-white/80 mb-1">{entry.phase}</div>
+                                                                    <div className="text-[9px] text-white/40 leading-relaxed font-mono whitespace-pre-wrap break-words">{entry.detail}</div>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    {/* Overall verdict */}
+                                                    <div className={`px-3 py-2 border-t border-white/8 text-[10px] font-bold uppercase tracking-widest text-center ${attackLog.every(l => l.result !== 'SUCCESS') ? 'bg-emerald-950/40 text-emerald-400' :
+                                                        attackLog.some(l => l.result === 'BLOCKED' || l.result === 'DETECTED') ? 'bg-yellow-950/40 text-yellow-400' :
+                                                            'bg-rose-950/40 text-rose-400'
+                                                        }`}>
+                                                        {attackLog.every(l => l.result !== 'SUCCESS') ? '✅ Architecture is Secured — All Phases Blocked' :
+                                                            attackLog.some(l => l.result === 'BLOCKED' || l.result === 'DETECTED') ? '⚠️ Partially Secured — Some Phases Succeeded' :
+                                                                '🔴 Architecture Compromised — All Phases Succeeded'}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>;
+                                    }
 
                                     // ── DNS INTERNET NODE (Backward Compatibility) ───
                                     if (ct === 'internet') return <div className="space-y-4">
