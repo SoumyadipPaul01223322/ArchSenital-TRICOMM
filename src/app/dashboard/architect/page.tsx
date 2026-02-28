@@ -439,6 +439,13 @@ function ArchitectContent() {
     const [attackedNodes, setAttackedNodes] = useState<string[]>([]);
     const attackTimerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+    // --- Attacker Node panel: proper top-level state (avoids stale closures) ---
+    const [attackRunning, setAttackRunning] = useState(false);
+    const [attackLog, setAttackLog] = useState<{ phase: string; result: 'SUCCESS' | 'BLOCKED' | 'DETECTED'; detail: string }[]>([]);
+    const [attackPhase, setAttackPhase] = useState('recon');
+    const [attackVector, setAttackVector] = useState('Nmap SYN Scan');
+    const [attackTargetId, setAttackTargetId] = useState<string>('');
+
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
     // Construct local graph context
@@ -1622,23 +1629,27 @@ function ArchitectContent() {
                                             exfil: ['DNS Tunneling', 'HTTP/S C2 Beacon', 'ICMP Covert Channel', 'Cloud Storage Exfil (S3)', 'FTP/SFTP Transfer'],
                                         };
 
-                                        const attackerPhase: string = d.attackPhase || 'recon';
-                                        const attackerVector = d.attackVector || PHASE_ATTACKS[attackerPhase][0];
-                                        const selectedTargetId: string = d.targetNodeId || '';
-                                        const attackLog: { phase: string; result: 'SUCCESS' | 'BLOCKED' | 'DETECTED'; detail: string; color: string }[] = d.attackLog || [];
-                                        const isRunning: boolean = d.attackRunning || false;
+                                        // Use top-level state (never stale)
+                                        const attackerPhase = attackPhase;
+                                        const attackerVector = attackVector;
+                                        const selectedTargetId = attackTargetId;
+                                        const isRunning = attackRunning;
 
                                         const nonAttackerNodes = nodes.filter(n => (n.data as any)?.componentType !== 'attacker');
                                         const targetNode = nodes.find(n => n.id === selectedTargetId) || nonAttackerNodes[0];
+                                        // Keep attackTargetId in sync with first node if unset
+                                        if (!selectedTargetId && nonAttackerNodes[0] && attackTargetId !== nonAttackerNodes[0].id) {
+                                            // will be set on first render
+                                        }
 
-                                        // Config-aware attack evaluator
-                                        const evaluateAttack = () => {
-                                            if (!targetNode) return;
+                                        // Config-aware evaluator — uses top-level state setters (no stale closures)
+                                        const runEvaluate = () => {
+                                            if (!targetNode) { setAttackRunning(false); return; }
                                             const td = targetNode.data as any;
                                             const hasWAF = nodes.some(n => (n.data as any)?.componentType === 'cdn' || (n.data as any)?.wafEnabled);
                                             const hasIDS = nodes.some(n => (n.data as any)?.enableIDS || (n.data as any)?.componentType === 'siem');
                                             const hasFW = nodes.some(n => (n.data as any)?.componentType === 'firewall' && (n.data as any)?.defaultPolicy !== 'Default Allow (Insecure)');
-                                            const encrypted = td.encryptionAtRest || td.tlsEnforced || td.tlsSyslog;
+                                            const encrypted = !!(td.encryptionAtRest || td.tlsEnforced || td.tlsSyslog);
                                             const strongAuth = (td.authMethod || '').includes('Key-based') || (td.authMethod || '').includes('Active Directory');
                                             const hasLocalFW = td.localFirewall !== false;
                                             const ip = td.ipAddress || '?.?.?.?';
@@ -1646,88 +1657,79 @@ function ArchitectContent() {
                                             const webSvc = td.webService && td.webService !== 'None' ? td.webService : '';
                                             const dbSvc = td.dbService && td.dbService !== 'None' ? td.dbService : '';
                                             const tLabel = (td.label as string) || targetNode.id;
+                                            const curPhase = attackPhase;
+                                            const curVector = attackVector;
 
                                             const log: typeof attackLog = [];
-                                            const curPhase = d.attackPhase || 'recon';
-                                            const curVector = d.attackVector || PHASE_ATTACKS[curPhase][0];
 
-                                            // ── Phase 1: Recon ──
+                                            // Phase 1 — Recon
                                             if (hasFW || hasIDS) {
-                                                log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `IDS/Firewall detected ${curVector === 'Nmap SYN Scan' ? 'SYN flood from ' + (d.ipAddress || 'attacker') : 'probe'} targeting ${ip}. Alert raised. Scan throttled.`, color: '#f59e0b' });
+                                                log.push({ phase: '🔎 Recon', result: 'DETECTED', detail: `IDS/Firewall detected ${curVector === 'Nmap SYN Scan' ? 'SYN flood from attacker IP' : 'probe'} targeting ${ip}. Alert raised. Scan throttled.` });
                                             } else {
-                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `${curVector} completed on ${ip} [${tLabel}]. OS: ${os}. Open ports: ${td.customPorts || '22,80,443'}. ${webSvc ? webSvc + ' detected.' : ''}`, color: '#10b981' });
+                                                log.push({ phase: '🔎 Recon', result: 'SUCCESS', detail: `${curVector} completed on ${ip} [${tLabel}]. OS: ${os}. Open ports: ${td.customPorts || '22,80,443'}.${webSvc ? ' ' + webSvc + ' detected.' : ''}` });
                                             }
 
-                                            // ── Phase 2: Initial Access ──
+                                            // Phase 2 — Initial Access
                                             if (hasWAF && curVector === 'SQL Injection') {
-                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF intercepted SQLi payload on ${ip}. Rule: OWASP CRS SQL-001. Request dropped. No DB access gained.`, color: '#ef4444' });
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `WAF intercepted SQLi payload on ${ip}. Rule: OWASP CRS SQL-001. Request dropped. No DB access gained.` });
                                             } else if (strongAuth && (curVector === 'Brute Force SSH/RDP' || curVector === 'Credential Stuffing')) {
-                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} uses key-based auth. Password spray failed. 0 valid creds found after 10,000 attempts.`, color: '#ef4444' });
+                                                log.push({ phase: '🚪 Initial Access', result: 'BLOCKED', detail: `${tLabel} uses key-based auth. Password spray failed after 10,000 attempts. No valid creds.` });
                                             } else {
-                                                const accessDetail = curVector === 'SQL Injection'
-                                                    ? `SQLi on ${ip}: POST /login → username=admin'--&password=x → ${dbSvc || 'DB'} returned error. Auth bypass succeeded. Session token obtained.`
+                                                const detail = curVector === 'SQL Injection'
+                                                    ? `SQLi on ${ip}: POST /login → admin'-- → ${dbSvc || 'DB'} auth bypass. Session token obtained.`
                                                     : curVector === 'Phishing Email'
-                                                        ? `Spear-phishing sent to ${tLabel} user. Payload: .docm macro. ${os.includes('Windows') ? 'PowerShell dropper launched.' : 'Bash reverse shell triggered.'} Callback to C2.`
-                                                        : `${curVector} executed on ${tLabel} (${ip}, ${os}). Foothold established.`;
-                                                log.push({ phase: '🚪 Initial Access', result: 'SUCCESS', detail: accessDetail, color: '#f97316' });
+                                                        ? `Spear-phish to ${tLabel}. .docm macro → ${os.includes('Windows') ? 'PowerShell dropper' : 'bash reverse shell'}. C2 callback received.`
+                                                        : `${curVector} on ${tLabel} (${ip}, ${os}). Foothold established.`;
+                                                log.push({ phase: '🚪 Initial Access', result: 'SUCCESS', detail });
                                             }
 
-                                            // ── Phase 3: Execution ──
-                                            const execBlocked = hasLocalFW && hasIDS;
-                                            if (execBlocked) {
-                                                log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `SIEM/IDS flagged ${d.attackVector || 'reverse shell'} beacon to C2. Process: cmd.exe → powershell.exe. Alert: High. Execution partially sandboxed.`, color: '#f59e0b' });
+                                            // Phase 3 — Execution
+                                            if (hasLocalFW && hasIDS) {
+                                                log.push({ phase: '⚙️ Execution', result: 'DETECTED', detail: `SIEM/IDS flagged ${curVector} → C2 beacon. Process: cmd.exe → powershell.exe. Alert: Critical. Execution sandboxed.` });
                                             } else {
-                                                log.push({ phase: '⚙️ Execution', result: 'SUCCESS', detail: `${d.execPayload || curVector} ran on ${tLabel} (${os}). Persistent cron/Task Scheduler backdoor set. C2 heartbeat: 30s.`, color: '#f97316' });
+                                                log.push({ phase: '⚙️ Execution', result: 'SUCCESS', detail: `${curVector} executed on ${tLabel} (${os}). Persistent backdoor installed. C2 heartbeat: 30s.` });
                                             }
 
-                                            // ── Phase 4: Privilege Escalation ──
+                                            // Phase 4 — Priv Esc
                                             if (os.includes('Windows') && strongAuth) {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `Token impersonation blocked by Windows Defender Credential Guard on ${tLabel}. Admin tokens protected.`, color: '#ef4444' });
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'BLOCKED', detail: `Token impersonation blocked by Windows Defender Credential Guard on ${tLabel}.` });
                                             } else {
-                                                log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `${os.includes('Win') ? 'Token impersonation via SeImpersonatePrivilege (PrintSpoofer)' : 'Dirty COW exploit compiled in-memory. /etc/passwd written'}. Root/SYSTEM on ${ip}.`, color: '#f97316' });
+                                                log.push({ phase: '⬆️ Priv Esc', result: 'SUCCESS', detail: `${os.includes('Win') ? 'PrintSpoofer — SeImpersonatePrivilege' : 'Dirty COW (CVE-2016-5195) — /etc/passwd written'}. Root/SYSTEM obtained on ${ip}.` });
                                             }
 
-                                            // ── Phase 5: Exfil ──
+                                            // Phase 5 — Exfil
                                             if (hasIDS && encrypted) {
-                                                log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `Anomalous outbound DNS TXT traffic from ${ip} detected by SIEM. 47MB blocked. Partial exfil: ~2.1MB before alert. Incident created.`, color: '#f59e0b' });
-                                            } else if (encrypted && !hasIDS) {
-                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Encrypted exfil via HTTPS C2. Data: ${dbSvc ? dbSvc + ' dump, ' : ''}SSH keys, /etc/shadow. 2.3GB transferred. No SIEM alert — logs not monitored.`, color: '#f97316' });
+                                                log.push({ phase: '📤 Exfil', result: 'DETECTED', detail: `Anomalous outbound DNS TXT from ${ip} flagged by SIEM. ~47MB blocked. ~2.1MB partial exfil before alert. Incident ticket created.` });
+                                            } else if (encrypted) {
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `HTTPS C2 exfil — data encrypted in transit. ${dbSvc ? dbSvc + ' dump, ' : ''}SSH keys, /etc/shadow. 2.3 GB sent. No SIEM monitoring detected.` });
                                             } else {
-                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP dump from ${ip}. ${td.sensitivityLevel > 3 ? 'HIGH-SENSITIVITY' : 'MEDIUM-SENSITIVITY'} data: ${dbSvc ? dbSvc + ' records, ' : ''}PII CSV. 47,000+ records exfiltrated.`, color: '#ef4444' });
+                                                log.push({ phase: '📤 Exfil', result: 'SUCCESS', detail: `Plaintext FTP dump from ${ip}. PII CSV, ${dbSvc ? dbSvc + ' records, ' : ''}47,000+ rows exfiltrated to attacker C2.` });
                                             }
 
-                                            // Animate nodes
-                                            const successTargets = [targetNode.id];
-                                            nodes.forEach(n => {
+                                            // Batch node animation — single setNodes call
+                                            const isBlocked = log.some(l => l.result === 'BLOCKED' || l.result === 'DETECTED');
+                                            setNodes(nds => nds.map(n => {
                                                 const nd = n.data as any;
-                                                if (nd.componentType !== 'attacker') {
-                                                    setNodes(nds => nds.map(node => node.id === n.id ? {
-                                                        ...node,
-                                                        style: { ...node.style, border: '2px solid #ef4444', boxShadow: '0 0 25px rgba(239,68,68,0.6)', transition: 'all 0.5s ease' }
-                                                    } : node));
-                                                }
-                                            });
+                                                if (nd?.componentType === 'attacker') return n;
+                                                return { ...n, style: { ...n.style, border: '2px solid #ef4444', boxShadow: '0 0 25px rgba(239,68,68,0.6)', transition: 'all 0.5s ease' } };
+                                            }));
                                             setTimeout(() => {
-                                                nodes.forEach(n => {
-                                                    if (n.data && (n.data as any).componentType !== 'attacker') {
-                                                        const isBlocked = log.some(l => l.result === 'BLOCKED' || l.result === 'DETECTED');
-                                                        setNodes(nds => nds.map(node => node.id === n.id ? {
-                                                            ...node,
-                                                            style: { ...node.style, border: isBlocked ? '2px solid #10b981' : '2px solid #ef4444', boxShadow: isBlocked ? '0 0 20px rgba(16,185,129,0.5)' : '0 0 20px rgba(239,68,68,0.5)', transition: 'all 0.5s ease' }
-                                                        } : node));
-                                                    }
-                                                });
+                                                setNodes(nds => nds.map(n => {
+                                                    const nd = n.data as any;
+                                                    if (nd?.componentType === 'attacker') return n;
+                                                    return { ...n, style: { ...n.style, border: isBlocked ? '2px solid #10b981' : '2px solid #ef4444', boxShadow: isBlocked ? '0 0 20px rgba(16,185,129,0.5)' : '0 0 20px rgba(239,68,68,0.5)', transition: 'all 0.5s ease' } };
+                                                }));
                                             }, 3000);
 
-                                            updateNodeData('attackLog', log);
-                                            updateNodeData('attackRunning', false);
+                                            setAttackLog(log);
+                                            setAttackRunning(false);
                                         };
 
                                         const launchAttack = () => {
-                                            if (!targetNode) return;
-                                            updateNodeData('attackLog', []);
-                                            updateNodeData('attackRunning', true);
-                                            setTimeout(evaluateAttack, 1200);
+                                            if (!targetNode || attackRunning) return;
+                                            setAttackLog([]);
+                                            setAttackRunning(true);
+                                            setTimeout(runEvaluate, 1000);
                                         };
 
                                         return <div className="space-y-4 text-white">
@@ -1761,7 +1763,7 @@ function ArchitectContent() {
                                                     {PHASES.map(ph => (
                                                         <button
                                                             key={ph.id}
-                                                            onClick={() => { updateNodeData('attackPhase', ph.id); updateNodeData('attackVector', PHASE_ATTACKS[ph.id][0]); updateNodeData('attackLog', []); }}
+                                                            onClick={() => { setAttackPhase(ph.id); setAttackVector(PHASE_ATTACKS[ph.id][0]); setAttackLog([]); }}
                                                             className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-center transition-all duration-200 ${attackerPhase === ph.id
                                                                 ? 'bg-rose-950/60 border-rose-500/60 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
                                                                 : 'bg-white/3 border-white/8 hover:bg-white/6 hover:border-white/15'
@@ -1781,7 +1783,7 @@ function ArchitectContent() {
                                                     {PHASE_ATTACKS[attackerPhase].map(v => (
                                                         <button
                                                             key={v}
-                                                            onClick={() => { updateNodeData('attackVector', v); updateNodeData('attackLog', []); }}
+                                                            onClick={() => { setAttackVector(v); setAttackLog([]); }}
                                                             className={`w-full text-left px-3 py-2 rounded-lg border text-xs transition-all duration-150 ${attackerVector === v
                                                                 ? 'bg-rose-950/50 border-rose-500/40 text-rose-200 font-semibold'
                                                                 : 'bg-white/3 border-white/6 text-white/50 hover:text-white/80 hover:bg-white/6'
@@ -1806,7 +1808,7 @@ function ArchitectContent() {
                                                             return (
                                                                 <button
                                                                     key={n.id}
-                                                                    onClick={() => updateNodeData('targetNodeId', n.id)}
+                                                                    onClick={() => setAttackTargetId(n.id)}
                                                                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border transition-all duration-150 text-left ${isSelected
                                                                         ? 'bg-cyan-950/40 border-cyan-500/40 text-cyan-200'
                                                                         : 'bg-white/3 border-white/6 text-white/50 hover:text-white/80 hover:bg-white/5'
@@ -1846,7 +1848,7 @@ function ArchitectContent() {
                                                             <Terminal className="h-3 w-3 text-rose-400" />
                                                             <span className="text-[10px] font-mono text-white/50 uppercase tracking-wider">Kill Chain Results</span>
                                                         </div>
-                                                        <button onClick={() => updateNodeData('attackLog', [])} className="text-white/20 hover:text-white/50 text-[10px]">Clear</button>
+                                                        <button onClick={() => setAttackLog([])} className="text-white/20 hover:text-white/50 text-[10px]">Clear</button>
                                                     </div>
                                                     <div className="divide-y divide-white/5 bg-black/40">
                                                         {attackLog.map((entry, i) => (
