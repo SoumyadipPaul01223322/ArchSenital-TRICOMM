@@ -64,6 +64,7 @@ Analyze the architecture comprehensively:
                 throw new Error("PERPLEXITY_API_KEY is missing in environment.");
             }
 
+            console.log("Attempting Perplexity AI simulation...");
             const perpRes = await fetch("https://api.perplexity.ai/chat/completions", {
                 method: "POST",
                 headers: {
@@ -90,9 +91,31 @@ Analyze the architecture comprehensively:
 
             // Clean up Markdown backticks if Perplexity returns them
             llmResponse = llmResponse.replace(/(^```json\s*|^```\s*|```$)/gm, '').trim();
-        } catch (apiError) {
-            console.error("Perplexity simulation failed:", apiError);
-            throw apiError;
+
+        } catch (apiError: any) {
+            console.warn(`Perplexity simulation failed (${apiError.message}). Falling back to Google Gemini...`);
+            attemptPlatform = "gemini";
+
+            if (!process.env.GOOGLE_GENAI_API_KEY) {
+                throw new Error(`Fallback failed: GOOGLE_GENAI_API_KEY is missing in environment. Original Error: ${apiError.message}`);
+            }
+
+            const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GENAI_API_KEY });
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: [
+                    { role: 'user', parts: [{ text: systemPrompt + `\n\nARCHITECTURE JSON:\n${architectureContext}` }] }
+                ],
+                config: {
+                    temperature: 0.3,
+                    responseMimeType: "application/json",
+                }
+            });
+
+            if (!response.text) {
+                throw new Error("Gemini returned an empty response during fallback.");
+            }
+            llmResponse = response.text.trim();
         }
 
         // Parse JSON output
