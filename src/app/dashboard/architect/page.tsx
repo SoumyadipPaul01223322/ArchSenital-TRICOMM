@@ -929,11 +929,16 @@ function ArchitectContent() {
                 });
             }
 
+            // Filter out disabled/powered-off nodes and their connected edges
+            const activeNodes = nodes.filter(n => n.data?.isActive !== false);
+            const activeNodeIds = new Set(activeNodes.map(n => n.id));
+            const activeEdges = edges.filter(e => activeNodeIds.has(e.source) && activeNodeIds.has(e.target));
+
             // Call the intelligent AI Threat Modeler (Gemini -> Perplexity fallback)
             const res = await fetch('/api/ai/simulate', {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ diagram: { nodes, edges } })
+                body: JSON.stringify({ diagram: { nodes: activeNodes, edges: activeEdges } })
             });
             const data = await res.json();
 
@@ -1647,6 +1652,14 @@ function ArchitectContent() {
             nds.map((node) => {
                 if (node.id === selectedNode.id) {
                     node.data = newData;
+                    if (key === 'isActive') {
+                        node.style = {
+                            ...node.style,
+                            opacity: value === false ? 0.3 : 1,
+                            filter: value === false ? 'grayscale(100%)' : 'none',
+                            borderStyle: value === false ? 'dashed' : 'solid'
+                        };
+                    }
                     setSelectedNode({ ...node }); // Update local reference for the panel
                 }
                 return node;
@@ -1838,6 +1851,7 @@ function ArchitectContent() {
                     ipAddress: defaultIp,
                     subnetMask: calcSubnetMask(defaultIp),
                     defaultGateway: defaultIp.replace(/\.\d+$/, '.1'),
+                    isActive: true, // Device is powered ON by default
                     networkConfig: {},
                     securityConfig: {},
                     availabilityConfig: {},
@@ -2593,6 +2607,7 @@ function ArchitectContent() {
                                     const EntityPanel = () => (
                                         <Sec icon={FileCheck} title="Component Identity">
                                             <TxtInput field="label" label="Display Name" placeholder="e.g. Primary DB" />
+                                            <Toggle field="isActive" label="Power State (ON/OFF)" defaultVal={true} />
                                         </Sec>
                                     );
 
