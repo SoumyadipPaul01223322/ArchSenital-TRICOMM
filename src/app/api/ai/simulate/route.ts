@@ -10,7 +10,47 @@ export async function POST(req: Request) {
             return NextResponse.json({ success: false, error: "Empty diagram" }, { status: 400 });
         }
 
-        const architectureContext = JSON.stringify({ nodes, edges }, null, 2);
+        // --- INTELLIGENT COMPONENT VERSION MAPPING ---
+        // Dynamically inject highly specific, outdated software/firmware versions to feed the AI generator explicitly vulnerable configurations.
+        const COMPONENT_VERSION_MAP: Record<string, any> = {
+            'core_router': { simulatedVersion: 'Cisco 2900 Series, IOS 15.2(4)M1', knownVulns: 'IKEv1 Information Disclosure (CVE-2016-1287), default SNMP strings' },
+            'edge_router': { simulatedVersion: 'Cisco ASR 1000 Series, IOS XE 16.6.1', knownVulns: 'REST API Auth Bypass (CVE-2019-12643)' },
+            'l3_switch': { simulatedVersion: 'Cisco Catalyst 3850, IOS XE 16.3.1', knownVulns: 'Smart Install Client RCE (CVE-2018-0171)' },
+            'l2_switch': { simulatedVersion: 'Cisco Catalyst 2960-X', knownVulns: 'CDP Parsing DoS / CDPwn' },
+            'cdn_edge': { simulatedVersion: 'Cloudflare Edge Node (Misconfigured)', knownVulns: 'Origin IP Leakage, Cache Poisoning' },
+            'web_server': { simulatedVersion: 'Apache 2.4.49', knownVulns: 'Path Traversal RCE (CVE-2021-41773)' },
+            'app_server': { simulatedVersion: 'Tomcat 9.0.30', knownVulns: 'Ghostcat (CVE-2020-1938)' },
+            'db_server': { simulatedVersion: 'PostgreSQL 10.5', knownVulns: 'Outdated vulnerable extensions, Auth bypass' },
+            'mail_server': { simulatedVersion: 'Microsoft Exchange Server 2019 CU8', knownVulns: 'ProxyLogon / ProxyShell RCE' },
+            'file_server': { simulatedVersion: 'Samba 4.13.17', knownVulns: 'SMBv1 enabled, Anonymous access allowed' },
+            'vps_linux': { simulatedVersion: 'Ubuntu 18.04 LTS (Kernel 4.15)', knownVulns: 'Polkit PwnKit (CVE-2021-4034), Dirty COW' },
+            'vps_windows': { simulatedVersion: 'Windows Server 2012 R2', knownVulns: 'EternalBlue, ZeroLogon' },
+            'ngfw': { simulatedVersion: 'Fortinet FortiOS 7.2.2', knownVulns: 'SSL-VPN RCE (CVE-2022-42475)' },
+            'waf': { simulatedVersion: 'F5 BIG-IP 15.1.0', knownVulns: 'TMUI RCE (CVE-2020-5902)' },
+            'vpn_gw': { simulatedVersion: 'Pulse Secure 9.0R3', knownVulns: 'Arbitrary File Read (CVE-2019-11510)' },
+            'wazuh': { simulatedVersion: 'Wazuh App v4.1', knownVulns: 'No immediate RCE, but poor log retention' },
+            'splunk': { simulatedVersion: 'Splunk Enterprise 8.2.1', knownVulns: 'Universal Forwarder RCE risk' },
+            'k8s_cluster': { simulatedVersion: 'K8s v1.21 (EOL)', knownVulns: 'Anonymous API access, Privileged Pod Escalation' },
+            'github_actions': { simulatedVersion: 'GitLab 13.10', knownVulns: 'ExifTool RCE (CVE-2021-22205)' },
+            's3_bucket': { simulatedVersion: 'AWS S3 Standard', knownVulns: 'Public Read/Write ACLs misconfigured' },
+            'windows_pc': { simulatedVersion: 'Windows 10 v1909', knownVulns: 'PrintNightmare (CVE-2021-34527)' },
+            'iot_device': { simulatedVersion: 'Hikvision IP Camera fw v5.5.0', knownVulns: 'Default admin credentials, Command injection' }
+        };
+
+        const enhancedNodes = nodes.map((n: any) => {
+            if (n.data?.subtype && COMPONENT_VERSION_MAP[n.data.subtype]) {
+                return {
+                    ...n,
+                    data: {
+                        ...n.data,
+                        ...COMPONENT_VERSION_MAP[n.data.subtype]
+                    }
+                };
+            }
+            return n;
+        });
+
+        const architectureContext = JSON.stringify({ nodes: enhancedNodes, edges }, null, 2);
 
         const systemPrompt = `You are a world-class Enterprise Cloud Security Architect, Red Team Lead, and CISO Advisor.
 Your goal is to deeply analyze the provided JSON architecture and dynamically simulate a highly realistic, technically rigorous cyber attack kill chain.
@@ -54,7 +94,8 @@ Analyze the architecture comprehensively:
 - The 'compromisedNodes' array MUST strictly contain the literal string IDs of the nodes that were breached (as provided in the 'id' field in the JSON).
 - The 'recommendedPatches' array MUST contain exact node IDs and the appropriate boolean security controls to toggle 'true' to fix the vulnerability. Do not recommend patching nodes that are already secured.
 - Ensure the 'result' in each kill chain step accurately reflects whether a component stopped the attack (BLOCKED), noticed it (DETECTED), or failed to stop it (SUCCESS).
-- Produce output with MAXIMUM detail, extensive enterprise-level security vocabulary, and comprehensive technical analysis.`;
+- Produce output with MAXIMUM detail, extensive enterprise-level security vocabulary, and comprehensive technical analysis.
+- IMPORTANT REALISM RULE: The JSON explicitly includes "simulatedVersion" and "knownVulnerabilities" for each component (e.g., Apache 2.4.49, Cisco IOS vulnerabilities). Your kill chain narrative MUST explicitly reference these exact versions and exploit those specific CVEs mechanically in the simulation. Do not invent generic attacks when a CVE is provided.`;
 
         let llmResponse = "";
         let attemptPlatform = "perplexity";
