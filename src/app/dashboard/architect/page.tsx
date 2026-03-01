@@ -2579,9 +2579,9 @@ function ArchitectContent() {
 
             {/* Configuration Right Panel - Spring Slide */}
             <div className={`
-                w-80 bg-[#0a0a0a] border-l border-white/[0.06] flex flex-col
+                bg-[#0a0a0a] border-white/[0.06] flex flex-col shrink-0
                 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
-                ${selectedNode ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8 w-0 overflow-hidden border-0'}
+                ${selectedNode ? 'w-80 min-w-[20rem] opacity-100 translate-x-0 border-l' : 'w-0 min-w-0 opacity-0 translate-x-8 overflow-hidden border-l-0'}
             `}>
                 {selectedNode && (
                     <>
