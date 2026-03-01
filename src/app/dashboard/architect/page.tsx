@@ -929,16 +929,11 @@ function ArchitectContent() {
                 });
             }
 
-            // Filter out disabled/powered-off nodes and their connected edges
-            const activeNodes = nodes.filter(n => n.data?.isActive !== false);
-            const activeNodeIds = new Set(activeNodes.map(n => n.id));
-            const activeEdges = edges.filter(e => activeNodeIds.has(e.source) && activeNodeIds.has(e.target));
-
             // Call the intelligent AI Threat Modeler (Gemini -> Perplexity fallback)
             const res = await fetch('/api/ai/simulate', {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ diagram: { nodes: activeNodes, edges: activeEdges } })
+                body: JSON.stringify({ diagram: { nodes, edges } })
             });
             const data = await res.json();
 
@@ -1002,16 +997,29 @@ function ArchitectContent() {
                     // Highlight all nodes marked as compromised by the AI
                     if (report.compromisedNodes && report.compromisedNodes.length > 0) {
                         setAttackedNodes(report.compromisedNodes);
-                        setNodes(nds => nds.map(n => report.compromisedNodes.includes(n.id) ? {
-                            ...n,
-                            style: {
-                                ...n.style,
-                                border: `2px solid #ef4444`,
-                                boxShadow: `0 0 30px rgba(239,68,68,0.7), 0 0 60px rgba(239,68,68,0.2)`,
-                                background: '#1a0505',
-                                transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)'
-                            }
-                        } : n));
+                        setNodes(nds => nds.map(n => {
+                            if (!report.compromisedNodes.includes(n.id)) return n;
+
+                            // If a node was hacked but is inactive (which ideally Gemini shouldn't do due to prompt rules),
+                            // preserve the dashed grayscale look so it doesn't "turn on" visually.
+                            const isNodeOffline = n.data?.isActive === false;
+
+                            return {
+                                ...n,
+                                style: {
+                                    ...n.style,
+                                    border: `2px solid #ef4444`,
+                                    boxShadow: `0 0 30px rgba(239,68,68,0.7), 0 0 60px rgba(239,68,68,0.2)`,
+                                    background: '#1a0505',
+                                    transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                                    ...(isNodeOffline && {
+                                        opacity: 0.3,
+                                        filter: 'grayscale(100%)',
+                                        borderStyle: 'dashed'
+                                    })
+                                }
+                            };
+                        }));
                     }
                 }, phaseIdx * 2500); // 2.5s delay per AI step for dramatic streaming effect
                 attackTimerRefs.current.push(t);
@@ -3061,10 +3069,10 @@ function ArchitectContent() {
                                                                 ? { border: '#f59e0b', glow: 'rgba(245,158,11,0.8)', label: 'warn' }
                                                                 : { border: '#ef4444', glow: 'rgba(239,68,68,0.9)', label: 'hit' };
 
-                                                    // Flash all non-attacker nodes with phase colour
+                                                    // Flash target node with phase colour
                                                     setNodes(nds => nds.map(n => {
-                                                        const nd = n.data as any;
-                                                        if (nd?.componentType === 'attacker') return n;
+                                                        if (n.id !== targetNode.id) return n;
+                                                        const isOffline = n.data?.isActive === false;
                                                         return {
                                                             ...n,
                                                             style: {
@@ -3072,7 +3080,8 @@ function ArchitectContent() {
                                                                 border: `2px solid ${color.border}`,
                                                                 boxShadow: `0 0 32px ${color.glow}, 0 0 8px ${color.glow}`,
                                                                 transition: 'all 0.25s ease',
-                                                                filter: `brightness(1.2)`
+                                                                filter: isOffline ? 'grayscale(100%)' : `brightness(1.2)`,
+                                                                opacity: isOffline ? 0.3 : 1
                                                             }
                                                         };
                                                     }));
@@ -3081,14 +3090,16 @@ function ArchitectContent() {
                                                     if (i < log.length - 1) {
                                                         setTimeout(() => {
                                                             setNodes(nds => nds.map(n => {
-                                                                if ((n.data as any)?.componentType === 'attacker') return n;
+                                                                if (n.id !== targetNode.id) return n;
+                                                                const isOffline = n.data?.isActive === false;
                                                                 return {
                                                                     ...n,
                                                                     style: {
                                                                         ...n.style,
                                                                         border: '1px solid rgba(255,255,255,0.1)',
                                                                         boxShadow: '0 0 6px rgba(255,255,255,0.05)',
-                                                                        filter: 'brightness(1)',
+                                                                        filter: isOffline ? 'grayscale(100%)' : 'brightness(1)',
+                                                                        opacity: isOffline ? 0.3 : 1,
                                                                         transition: 'all 0.5s ease'
                                                                     }
                                                                 };
@@ -3104,7 +3115,7 @@ function ArchitectContent() {
                                                             if ((n.data as any)?.componentType !== 'attacker') return n;
                                                             return { ...n, style: { ...n.style, boxShadow: '0 0 20px rgba(239,68,68,0.4)', border: '2px solid #ef4444', filter: 'brightness(1)', transition: 'all 0.5s ease' } };
                                                         }));
-                                                        // Settle all other nodes to final verdict colour
+                                                        // Settle target node to final verdict colour
                                                         const allSecured = log.every(l => l.result !== 'SUCCESS');
                                                         const anySuccess = log.some(l => l.result === 'SUCCESS');
                                                         const finalColor = allSecured
@@ -3114,14 +3125,16 @@ function ArchitectContent() {
                                                                 : { border: '#f59e0b', glow: 'rgba(245,158,11,0.4)' };
                                                         setTimeout(() => {
                                                             setNodes(nds => nds.map(n => {
-                                                                if ((n.data as any)?.componentType === 'attacker') return n;
+                                                                if (n.id !== targetNode.id) return n;
+                                                                const isOffline = n.data?.isActive === false;
                                                                 return {
                                                                     ...n,
                                                                     style: {
                                                                         ...n.style,
                                                                         border: `2px solid ${finalColor.border}`,
                                                                         boxShadow: `0 0 18px ${finalColor.glow}`,
-                                                                        filter: 'brightness(1)',
+                                                                        filter: isOffline ? 'grayscale(100%)' : 'brightness(1)',
+                                                                        opacity: isOffline ? 0.3 : 1,
                                                                         transition: 'all 0.6s ease'
                                                                     }
                                                                 };
