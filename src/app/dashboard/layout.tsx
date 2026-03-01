@@ -20,7 +20,9 @@ import {
     Search,
     Database,
     ShieldCheck,
-    History
+    History,
+    Menu,
+    X
 } from "lucide-react";
 import RiskBadge from "./RiskBadge";
 
@@ -104,6 +106,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [collapsed, setCollapsed] = useState(false);
     const [hovered, setHovered] = useState(false);
     const [mounted, setMounted] = useState(false);
+    const [mobileOpen, setMobileOpen] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -116,12 +119,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     useEffect(() => {
         setMounted(true);
-        const mq = window.matchMedia("(max-width: 1024px)");
+        // tablet: auto-collapse on screens < 1024px
+        const mq = window.matchMedia("(max-width: 1023px)");
         if (mq.matches) setCollapsed(true);
-        const handler = (e: MediaQueryListEvent) => setCollapsed(e.matches);
+        const handler = (e: MediaQueryListEvent) => {
+            setCollapsed(e.matches);
+            if (!e.matches) setMobileOpen(false); // close drawer when going desktop
+        };
         mq.addEventListener("change", handler);
         return () => mq.removeEventListener("change", handler);
     }, []);
+
+    // Close mobile drawer on route change
+    useEffect(() => { setMobileOpen(false); }, [pathname]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -132,6 +142,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             if (e.key === 'Escape') {
                 setSearchOpen(false);
                 setNotificationsOpen(false);
+                setMobileOpen(false);
             }
         };
         window.addEventListener('keydown', handleKeyDown);
@@ -162,6 +173,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     return (
         <div className="min-h-screen bg-[#090910] text-white flex overflow-hidden">
+
+            {/* ── MOBILE BACKDROP ──────────────────────────────────── */}
+            {mobileOpen && (
+                <div
+                    className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm md:hidden"
+                    onClick={() => setMobileOpen(false)}
+                />
+            )}
             <style dangerouslySetInnerHTML={{
                 __html: `
                 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
@@ -202,16 +221,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }
             ` }} />
 
-            {/* Spacer */}
+            {/* Spacer — pushes main content right on md+ */}
             <div className={`hidden md:block flex-shrink-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${collapsed ? "w-16" : "w-64"}`} />
 
             {/* ── SIDEBAR ──────────────────────────────────────────── */}
+            {/* On mobile: slide-in overlay drawer (z-[100]). On md+: fixed rail/expanded. */}
             <aside
                 className={`
-                    group/aside fixed left-0 top-0 bottom-0 ${sidebarWidth}
+                    group/aside fixed left-0 top-0 bottom-0
                     bg-[#0b0b12] border-r border-white/[0.06] flex flex-col
                     transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] z-[100]
-                    hidden md:flex
+                    ${
+                    /* Mobile: hidden unless mobileOpen, always full-width drawer */
+                    mobileOpen ? "translate-x-0 w-64" : "-translate-x-full w-64"
+                    }
+                    md:translate-x-0 ${sidebarWidth}
                 `}
                 onMouseEnter={() => collapsed && setHovered(true)}
                 onMouseLeave={() => setHovered(false)}
@@ -254,7 +278,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
 
                 {/* Nav */}
-                <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-hidden">
+                <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: "none" }}>
                     {NAV_ITEMS.map((item) => {
                         const active = isActive(item);
                         const Icon = item.icon;
@@ -325,11 +349,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <main className="flex-1 flex flex-col overflow-hidden min-w-0">
 
                 {/* Header */}
-                <header className="h-14 border-b border-white/[0.06] flex items-center justify-between px-6 bg-[#0b0b12]/90 backdrop-blur-xl sticky top-0 z-20 flex-shrink-0">
-                    <div className="flex items-center gap-4">
-                        {/* Mobile logo */}
+                <header className="h-14 border-b border-white/[0.06] flex items-center justify-between px-4 md:px-6 bg-[#0b0b12]/90 backdrop-blur-xl sticky top-0 z-20 flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                        {/* Mobile hamburger */}
+                        <button
+                            className="md:hidden h-8 w-8 flex items-center justify-center rounded-lg border border-white/10 text-white/50 hover:text-white hover:bg-white/5 transition-all"
+                            onClick={() => setMobileOpen(o => !o)}
+                            aria-label="Open navigation"
+                        >
+                            {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+                        </button>
+
+                        {/* Mobile logo (shown next to hamburger) */}
                         <div className="md:hidden flex items-center gap-2">
-                            <ShieldAlert className="h-5 w-5 text-[#00e5a0]" />
+                            <ShieldAlert className="h-4 w-4 text-[#00e5a0]" />
                             <span className="font-bold text-sm">ArchSentinel</span>
                         </div>
 
