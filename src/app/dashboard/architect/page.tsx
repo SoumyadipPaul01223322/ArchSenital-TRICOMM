@@ -250,6 +250,67 @@ const SensSlider = () => {
         </div>
     );
 };
+
+const VersionComboSelector = ({ options: defaultOptions = [] }: { options?: string[] }) => {
+    const { d, updateNodeData } = useContext(ConfigContext);
+    const [options, setOptions] = useState<string[]>(defaultOptions);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (!d?.subtype || !d?.type) return;
+
+        // Reset to default on component change
+        setOptions(defaultOptions);
+
+        const cacheKey = `cpe-suggestions-${d.type}-${d.subtype}`;
+        const cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+            setOptions(JSON.parse(cached));
+            return;
+        }
+
+        let isMounted = true;
+        setLoading(true);
+        fetch('/api/ai/suggest-versions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nodeData: d })
+        })
+            .then(r => r.json())
+            .then(res => {
+                if (isMounted && res.options && res.options.length > 0) {
+                    setOptions(res.options);
+                    sessionStorage.setItem(cacheKey, JSON.stringify(res.options));
+                }
+                if (isMounted) setLoading(false);
+            })
+            .catch(() => { if (isMounted) setLoading(false); });
+
+        return () => { isMounted = false; };
+    }, [d?.subtype, d?.type]);
+
+    const listId = `versions-${d?.id || 'list'}`;
+    return (
+        <div className="py-2 border-t border-white/6 mt-2 relative">
+            <div className="flex justify-between items-center mb-1.5">
+                <label className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">Simulated Version (CPE)</label>
+                {loading && <div className="flex items-center gap-1 opacity-70"><Bot className="w-3 h-3 text-cyan-400 animate-pulse" /><span className="text-[8px] text-cyan-400 font-mono tracking-widest">AI THINKING...</span></div>}
+            </div>
+            <input
+                type="text"
+                list={listId}
+                value={d?.serviceVersion ?? ''}
+                onChange={e => updateNodeData('serviceVersion', e.target.value)}
+                placeholder={loading ? "Generating suggestions..." : "Auto-detect API Default"}
+                className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-sm focus:outline-none focus:border-cyan-500 transition-colors text-white placeholder:text-white/20"
+            />
+            <datalist id={listId}>
+                {options.map(o => <option key={o} value={o} />)}
+            </datalist>
+            <p className="text-[9px] text-white/30 mt-1.5 leading-relaxed">Overrides AI defaults. Select or type explicit versions to simulate specific CVE exploits.</p>
+        </div>
+    );
+};
 // ---- COMPONENT TREE: Parent categories & Child subtypes ----
 const COMPONENT_TREE = [
     {
@@ -2587,6 +2648,7 @@ function ArchitectContent() {
                                             <Toggle field="encryptionInTransit" label="Encryption in Transit (TLS)" defaultVal={true} />
                                             <Sel field="authMethod" label="Auth Method" options={['Password', 'Key-based (RSA/Ed25519)', 'Active Directory/LDAP']} defaultVal="Key-based (RSA/Ed25519)" />
                                         </Sec>
+                                        <VersionComboSelector options={['Ubuntu 18.04 LTS (Kernel 4.15)', 'Windows Server 2012 R2', 'Apache 2.4.49', 'Nginx 1.18', 'Microsoft Exchange Server 2019 CU8']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2605,6 +2667,7 @@ function ArchitectContent() {
                                             <Sel field="authMethod" label="Auth Method" options={['Static Passwords', 'IAM Roles / Short-lived Tokens', 'Mutual TLS']} defaultVal="Static Passwords" />
                                             <Toggle field="mfaRequired" label="MFA Required for Admins" defaultVal={false} />
                                         </Sec>
+                                        <VersionComboSelector options={['PostgreSQL 10.5', 'MySQL 5.7.20', 'Redis 2.8', 'MongoDB 3.6']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2623,6 +2686,7 @@ function ArchitectContent() {
                                             <Sel field="authType" label="Authentication Type" options={['OAuth 2.0 / JWT', 'API Keys', 'Mutual TLS', 'Unauthenticated (None)']} defaultVal="OAuth 2.0 / JWT" />
                                             <Toggle field="mfaRequired" label="MFA Supported/Enforced" defaultVal={true} />
                                         </Sec>
+                                        <VersionComboSelector options={['AWS API Gateway', 'Kong 2.0.4', 'Express.js 4.16']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2657,6 +2721,7 @@ function ArchitectContent() {
                                             </Sec>
                                         )}
 
+                                        <VersionComboSelector options={['Okta Identity Engine', 'Active Directory 2012 R2', 'Keycloak 10.0.0']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2671,6 +2736,7 @@ function ArchitectContent() {
                                             <Sel field="passwordPolicy" label="Password Policy" options={['Strong (14+ char, complexity)', 'Standard (8+ char)', 'Weak (No complexity constraints)']} defaultVal="Strong (14+ char, complexity)" />
                                             <Toggle field="ssoEnabled" label="Single Sign-On (SAML/OIDC)" defaultVal={true} />
                                         </Sec>
+                                        <VersionComboSelector options={['Fortinet FortiOS 7.2.2', 'Palo Alto PAN-OS 8.1', 'pfSense 2.4.0', 'F5 BIG-IP 15.1.0', 'Pulse Secure 9.0R3']} />
                                         <SensSlider />
                                     </div>;
                                     // ── CDN / EDGE NODE ──────────────────────────────
@@ -2687,6 +2753,7 @@ function ArchitectContent() {
                                             <Sel field="wafMode" label="WAF Operation" options={['Blocking', 'Challenge/Captcha', 'Log Only']} defaultVal="Blocking" />
                                             <Toggle field="botManagement" label="Advanced Bot Management" defaultVal={false} />
                                         </Sec>
+                                        <VersionComboSelector options={['Cisco 2900 Series, IOS 15.2(4)M1', 'Cisco ASR 1000 Series', 'Juniper MX Series']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2702,6 +2769,7 @@ function ArchitectContent() {
                                             <Toggle field="networkPolicies" label="Network Policies (Calico/Cilium)" defaultVal={false} />
                                             <Sel field="serviceMesh" label="Service Mesh" options={['None', 'Istio', 'Linkerd']} defaultVal="None" />
                                         </Sec>
+                                        <VersionComboSelector options={['Cisco Catalyst 3850, IOS XE 16.3.1', 'Cisco Catalyst 2960-X', 'HP ProCurve']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2716,6 +2784,7 @@ function ArchitectContent() {
                                             <Toggle field="leastPrivilegeRoles" label="Least Privilege IAM Role" defaultVal={false} />
                                             <Toggle field="envEncryption" label="Encrypted Env Variables (KMS)" defaultVal={true} />
                                         </Sec>
+                                        <VersionComboSelector options={['Wazuh App v4.1', 'Splunk Enterprise 8.2.1', 'IBM QRadar']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2731,6 +2800,7 @@ function ArchitectContent() {
                                             <Toggle field="blockPublicAcls" label="Block Public ACLs" defaultVal={true} />
                                             <Sel field="corsPolicy" label="CORS Policy" options={['Strict (Allowed Origins)', 'Wildcard (*)', 'None']} defaultVal="Strict (Allowed Origins)" />
                                         </Sec>
+                                        <VersionComboSelector options={['K8s v1.21 (EOL)', 'kube-aws v1.19', 'OpenShift 3.11']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2746,6 +2816,7 @@ function ArchitectContent() {
                                             <Toggle field="dependencyCheck" label="SCA Dependency Scanning" defaultVal={true} />
                                             <Toggle field="imageSigning" label="Container Image Signing (Cosign)" defaultVal={false} />
                                         </Sec>
+                                        <VersionComboSelector options={['GitLab 13.10', 'Jenkins 2.148', 'GitHub Actions']} />
                                         <SensSlider />
                                     </div>;
 
@@ -2798,6 +2869,7 @@ function ArchitectContent() {
                                                 <Toggle field="secureBoot" label="Hardware Secure Boot" defaultVal={false} />
                                             </Sec>
                                         )}
+                                        <VersionComboSelector options={['Windows 10 v1909', 'Ubuntu 20.04 Desktop', 'macOS Catalina', 'Hikvision IP Camera fw v5.5.0']} />
                                         <SensSlider />
                                     </div>;
 
@@ -3251,6 +3323,7 @@ function ArchitectContent() {
                                             <TxtInput field="ttl" label="TTL Status" placeholder="30" />
                                             <Toggle field="tlsEnforced" label="TLS Enforced" defaultVal={true} />
                                         </Sec>
+                                        <VersionComboSelector options={['Default version override...']} />
                                         <SensSlider />
                                     </div>;
 
