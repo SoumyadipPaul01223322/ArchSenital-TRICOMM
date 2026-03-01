@@ -439,9 +439,298 @@ function ArchitectContent() {
         impactScore: number;
         compromisedNodes: string[];
         findings: { componentId: string, description: string, severity: string, complianceMappings: string[] }[];
+        killChain?: any[];
+        report?: any;
     } | null>(null);
     const [aiSummary, setAiSummary] = useState<string | null>(null);
     const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+    const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+    const handleExportSOCReport = async () => {
+        if (!simulationResults) return;
+        setIsExportingPdf(true);
+        try {
+            const criticals = simulationResults.findings.filter((f: any) => f.severity === 'Critical').length;
+            const highs = simulationResults.findings.filter((f: any) => f.severity === 'High').length;
+            const baseCost = (criticals * 1.2 + highs * 0.4);
+            const rangeLow = baseCost.toFixed(1);
+            const rangeHigh = (baseCost * 1.7).toFixed(1);
+
+            const res = await fetch('/api/ai/summarize-soc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nodes,
+                    edges,
+                    simulationResults,
+                    financialImpact: simulationResults.impactScore > 0 ? { rangeLow, rangeHigh } : null
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to generate report');
+
+            const pdfMakeModule: any = await import("pdfmake/build/pdfmake");
+            const pdfFontsModule: any = await import("pdfmake/build/vfs_fonts");
+            const pdfMake: any = pdfMakeModule.default || pdfMakeModule;
+            const pdfFonts: any = pdfFontsModule.default || pdfFontsModule;
+            pdfMake.vfs = pdfFonts.pdfMake ? pdfFonts.pdfMake.vfs : pdfFonts.vfs;
+
+            // --- SVG GENERATORS FOR MODERN VISUALS ---
+            const makeBarSvg = (val: number, color: string, bg = '#1e293b') => {
+                const width = 150;
+                const fillWidth = Math.max(2, (val / 100) * width);
+                return `<svg width="${width}" height="6" viewBox="0 0 ${width} 6" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="0" y="0" width="${width}" height="6" fill="${bg}" rx="3" />
+                    <rect x="0" y="0" width="${fillWidth}" height="6" fill="${color}" rx="3" />
+                </svg>`;
+            };
+
+            const riskScore = data.riskMetrics?.overallRiskScore ?? simulationResults.impactScore;
+            const getHeatColor = (lvl: string) => lvl === 'High' ? '#ef4444' : lvl === 'Medium' ? '#f59e0b' : '#10b981';
+
+            const heatmapBody = [
+                // Header row
+                [
+                    { text: 'ATTACK VECTOR', style: 'tableHeader' },
+                    { text: 'LIKELIHOOD', style: 'tableHeader', alignment: 'center' },
+                    { text: 'IMPACT', style: 'tableHeader', alignment: 'center' }
+                ],
+                // Data rows
+                ...(data.riskMetrics?.heatmapMatrix || []).map((row: any) => [
+                    { text: row.vector, style: 'tableCell', margin: [0, 5, 0, 5], color: '#f8fafc', fillColor: '#0f172a' },
+                    { text: row.likelihood?.toUpperCase(), alignment: 'center', margin: [0, 5, 0, 5], color: '#fff', fillColor: getHeatColor(row.likelihood) },
+                    { text: row.impact?.toUpperCase(), alignment: 'center', margin: [0, 5, 0, 5], color: '#fff', fillColor: getHeatColor(row.impact) }
+                ])
+            ];
+
+            // --- COMPLIANCE MODELING ---
+            const frameworks = [
+                { name: 'SOC 2 Type II', authority: 'AICPA', cov: 92, match: 'SOC2' },
+                { name: 'ISO 27001', authority: 'ISO', cov: 90, match: 'ISO27001' },
+                { name: 'OWASP Top 10', authority: 'OWASP Foundation', cov: 100, match: 'OWASP' },
+                { name: 'HIPAA', authority: 'HHS', cov: 100, match: 'HIPAA' },
+                { name: 'PCI-DSS', authority: 'PCI SSC', cov: 85, match: 'PCI' },
+                { name: 'GDPR', authority: 'EU Parliament', cov: 88, match: 'GDPR' }
+            ].map(fw => {
+                const hasGap = simulationResults.findings.some((f: any) => f.complianceMappings?.join(',').includes(fw.match));
+                return { ...fw, hasGap, displayCov: hasGap ? fw.cov : 100 };
+            });
+
+            const policyGaps = frameworks.filter(f => f.hasGap).length;
+
+            const docDefinition: any = {
+                pageSize: 'A4',
+                pageMargins: [40, 60, 40, 60],
+                defaultStyle: { font: 'Roboto', fontSize: 10, lineHeight: 1.4, color: '#334155' },
+                styles: {
+                    h1: { fontSize: 24, bold: true, color: '#0f172a', margin: [0, 0, 0, 4] },
+                    h2: { fontSize: 12, bold: true, color: '#f8fafc', fillColor: '#0f172a', margin: [0, 30, 0, 15] },
+                    h3: { fontSize: 10, bold: true, color: '#0369a1', margin: [0, 15, 0, 8] },
+                    tableHeader: { bold: true, fontSize: 9, color: '#94a3b8', fillColor: '#0f172a', margin: [4, 6, 4, 6] },
+                    tableCell: { fontSize: 9, color: '#334155' }
+                },
+                content: [
+                    // TOP BANNER
+                    {
+                        table: {
+                            widths: ['*'],
+                            body: [[{
+                                stack: [
+                                    { text: 'AFTER-ACTION INTEL REPORT', style: 'h1', margin: [0, 0, 0, 4], color: '#ffffff' },
+                                    { text: `● LIVE SIMULATION RESULTS · MITRE ATT&CK  |  DATE: ${new Date().toISOString().split('T')[0]}`, fontSize: 8, color: '#38bdf8', tracking: 1 }
+                                ],
+                                fillColor: '#0a0a0a',
+                                margin: [20, 20, 20, 20],
+                                border: [false, false, false, false]
+                            }]]
+                        },
+                        margin: [0, 0, 0, 10]
+                    },
+
+                    // BREACH METRICS
+                    {
+                        table: {
+                            widths: ['33%', '33%', '34%'],
+                            body: [[
+                                {
+                                    stack: [
+                                        { text: 'COMPROMISED ASSETS', fontSize: 8, bold: true, color: '#94a3b8', margin: [0, 0, 0, 6] },
+                                        { text: simulationResults.compromisedNodes.length.toString(), fontSize: 28, color: '#ef4444' }
+                                    ],
+                                    fillColor: '#0f172a', margin: [10, 15, 10, 15], border: [false, false, false, false]
+                                },
+                                {
+                                    stack: [
+                                        { text: 'CRITICAL FINDINGS', fontSize: 8, bold: true, color: '#94a3b8', margin: [0, 0, 0, 6] },
+                                        { text: criticals.toString(), fontSize: 28, color: '#ef4444' }
+                                    ],
+                                    fillColor: '#0f172a', margin: [10, 15, 10, 15], border: [false, false, false, false]
+                                },
+                                {
+                                    stack: [
+                                        { text: 'COMPLIANCE VIOLATIONS', fontSize: 8, bold: true, color: '#94a3b8', margin: [0, 0, 0, 6] },
+                                        { text: `${policyGaps} Policy Gaps Detected`, fontSize: 16, color: '#f59e0b', margin: [0, 6, 0, 0] }
+                                    ],
+                                    fillColor: '#0f172a', margin: [10, 15, 10, 15], border: [false, false, false, false]
+                                }
+                            ]]
+                        },
+                        layout: { defaultBorder: false, hLineColor: () => '#000', vLineColor: () => '#000', hLineWidth: () => 4, vLineWidth: () => 4 },
+                        margin: [0, 0, 0, 20]
+                    },
+
+                    // ZIN AI BRIEFING (EXECUTIVE SUMMARY)
+                    { text: '>_ ZIN AI BRIEFING', style: 'h3' },
+                    { text: 'EXECUTIVE SECURITY BRIEF — AI THREAT INTEL', fontSize: 9, bold: true, color: '#0369a1', margin: [0, 0, 0, 8] },
+                    { text: data.executiveSummary, alignment: 'justify', color: '#0f172a', fontSize: 9, margin: [0, 0, 0, 10] },
+                    { text: `Estimated Financial Impact: ₹${rangeLow} Crores - ₹${rangeHigh} Crores`, color: '#0369a1', fontSize: 9, bold: true, margin: [0, 0, 0, 20] },
+
+                    // SIMULATED ATTACK TIMELINE
+                    { text: 'SIMULATED ATTACK TIMELINE', style: 'h3', margin: [0, 15, 0, 10] },
+                    ...(simulationResults.killChain || []).map((kc: any, idx: number) => ({
+                        table: {
+                            widths: ['auto', '*'],
+                            body: [[
+                                { text: `[00:0${idx * 4}]`, bold: true, color: '#ef4444', fontSize: 9, margin: [0, 2, 0, 0] },
+                                {
+                                    stack: [
+                                        { text: kc.step?.toUpperCase(), bold: true, color: '#f59e0b', fontSize: 10 },
+                                        { text: kc.detail, color: '#94a3b8', fontSize: 9, margin: [0, 4, 0, 0] }
+                                    ]
+                                }
+                            ]]
+                        },
+                        layout: 'noBorders',
+                        margin: [10, 0, 0, 15]
+                    })),
+
+                    // COMPLIANCE FRAMEWORK COVERAGE
+                    { text: 'COMPLIANCE FRAMEWORK COVERAGE', style: 'h3', margin: [0, 20, 0, 10] },
+                    {
+                        table: {
+                            headerRows: 1,
+                            widths: ['30%', '25%', '25%', '20%'],
+                            body: [
+                                // Header
+                                [
+                                    { text: 'FRAMEWORK', style: 'tableHeader' },
+                                    { text: 'AUTHORITY', style: 'tableHeader' },
+                                    { text: 'COVERAGE', style: 'tableHeader' },
+                                    { text: 'IDENTIFIED GAPS', style: 'tableHeader', alignment: 'right' }
+                                ],
+                                // Data
+                                ...frameworks.map(fw => [
+                                    { text: fw.name, style: 'tableCell', bold: true, margin: [0, 6, 0, 6], fillColor: '#0f172a' },
+                                    { text: fw.authority, style: 'tableCell', margin: [0, 6, 0, 6], fillColor: '#0f172a' },
+                                    { svg: makeBarSvg(fw.displayCov, fw.hasGap ? '#ef4444' : '#10b981', '#1e293b'), margin: [0, 8, 0, 6], fillColor: '#0f172a' },
+                                    {
+                                        text: fw.hasGap ? 'POLICY GAP' : '✓ SECURE',
+                                        fontSize: 8, bold: true,
+                                        color: fw.hasGap ? '#ef4444' : '#10b981',
+                                        alignment: 'right',
+                                        margin: [0, 6, 0, 6],
+                                        fillColor: '#0f172a'
+                                    }
+                                ])
+                            ]
+                        },
+                        layout: { hLineWidth: () => 1, vLineWidth: () => 0, hLineColor: () => '#1e293b' },
+                        margin: [0, 0, 0, 20]
+                    },
+
+                    // HEATMAP TABLE
+                    { text: 'ATTACK VECTOR HEATMAP', style: 'h3' },
+                    {
+                        table: {
+                            headerRows: 1,
+                            widths: ['*', '20%', '20%'],
+                            body: heatmapBody
+                        },
+                        layout: {
+                            hLineWidth: () => 1,
+                            vLineWidth: () => 1,
+                            hLineColor: () => '#1e293b',
+                            vLineColor: () => '#1e293b',
+                            paddingLeft: () => 8,
+                            paddingRight: () => 8,
+                        },
+                        margin: [0, 0, 0, 20]
+                    },
+
+                    { text: 'THREAT VECTORS & VIOLATIONS', style: 'h3', margin: [0, 20, 0, 10] }
+                ]
+            };
+
+            // DYNAMIC KEY FINDINGS (Threat Vectors & Violations)
+            data.keyFindings?.forEach((f: any) => {
+                const color = f.severity === 'Critical' ? '#ef4444' : f.severity === 'High' ? '#f59e0b' : '#3b82f6';
+                const compBadges = !Array.isArray(f.complianceMappings) ? [] : f.complianceMappings.map((c: string) => ({
+                    text: c,
+                    fontSize: 7,
+                    bold: true,
+                    color: '#38bdf8',
+                    margin: [4, 2, 4, 2]
+                }));
+
+                const compBadgeContainer = compBadges.length > 0 ? {
+                    table: {
+                        widths: Array(compBadges.length).fill('auto'),
+                        body: [compBadges]
+                    },
+                    layout: 'noBorders',
+                    margin: [0, 10, 0, 0]
+                } : {};
+
+                docDefinition.content.push({
+                    table: {
+                        widths: ['*'],
+                        body: [[
+                            {
+                                stack: [
+                                    {
+                                        columns: [
+                                            { text: `[${f.severity?.toUpperCase()}] ${f.title}`, bold: true, color: color, fontSize: 10, width: '*' },
+                                            { text: `RISK: ${f.severity?.toUpperCase()}`, color, fontSize: 8, bold: true, alignment: 'right', width: 'auto' }
+                                        ]
+                                    },
+                                    { text: f.description, color: '#f8fafc', margin: [0, 6, 0, 0] },
+                                    compBadgeContainer
+                                ],
+                                border: [true, false, false, false],
+                                borderColor: [color, '#fff', '#fff', '#fff'],
+                                fillColor: '#0f172a',
+                                margin: [10, 12, 10, 12]
+                            }
+                        ]]
+                    },
+                    margin: [0, 0, 0, 10],
+                    layout: { defaultBorder: false, vLineWidth: () => 3 } // Left thick border
+                });
+            });
+
+            // IR ACTION PLAN
+            docDefinition.content.push({ text: 'INCIDENT RESPONSE ACTION PLAN', style: 'h3', margin: [0, 20, 0, 10] });
+            data.recommendedActions?.forEach((r: any, i: number) => {
+                docDefinition.content.push({
+                    text: [
+                        { text: `STEP ${i + 1} - ${r.phase?.toUpperCase()}:\n`, bold: true, color: '#475569' },
+                        { text: r.action }
+                    ],
+                    margin: [0, 0, 0, 10]
+                });
+            });
+
+            docDefinition.content.push({ text: 'END OF INTELLIGENCE BRIEFING', alignment: 'center', fontSize: 8, color: '#94a3b8', margin: [0, 40, 0, 0] });
+
+            pdfMake.createPdf(docDefinition).download(`SOC_Intel_Brief_${Date.now()}.pdf`);
+        } catch (err: any) {
+            console.error(err);
+            alert("Export failed: " + err.message);
+        } finally {
+            setIsExportingPdf(false);
+        }
+    };
+
     const [zeroTrustMode, setZeroTrustMode] = useState(false);
     const [simulationError, setSimulationError] = useState<string | null>(null);
     const [deletingNodeId, setDeletingNodeId] = useState<string | null>(null);
@@ -3049,6 +3338,14 @@ function ArchitectContent() {
                                             {zeroTrustMode ? Math.round(simulationResults?.impactScore * 0.45) : simulationResults?.impactScore}<span className="text-sm font-normal text-white/30 ml-1">/100</span>
                                         </div>
                                     </div>
+                                    <button
+                                        onClick={handleExportSOCReport}
+                                        disabled={isExportingPdf}
+                                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#00E5A0]/30 bg-[#00E5A0]/10 text-[#00E5A0] hover:bg-[#00E5A0]/20 disabled:opacity-50 text-xs font-bold uppercase tracking-widest transition-all"
+                                    >
+                                        {isExportingPdf ? <Activity className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
+                                        {isExportingPdf ? 'Exporting...' : 'Export SOC Report'}
+                                    </button>
                                     <button
                                         onClick={() => setSimulationResults(null)}
                                         className="p-3 bg-white/5 hover:bg-[#FF3131] border border-white/10 hover:border-[#FF3131] text-white/60 hover:text-white transition-colors"
