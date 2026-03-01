@@ -3,9 +3,15 @@ import { EC2Client, DescribeInstancesCommand } from "@aws-sdk/client-ec2";
 import { ElasticLoadBalancingV2Client, DescribeLoadBalancersCommand } from "@aws-sdk/client-elastic-load-balancing-v2";
 import { RDSClient, DescribeDBInstancesCommand } from "@aws-sdk/client-rds";
 import { WAFV2Client, ListWebACLsCommand } from "@aws-sdk/client-wafv2";
+import { auth } from "@clerk/nextjs/server";
 
 export async function GET() {
     try {
+        const { userId } = await auth();
+        if (!userId) {
+            return NextResponse.json({ success: false, error: "Unauthorized access detected. Session invalid." }, { status: 401 });
+        }
+
         const region = process.env.AWS_REGION || "us-east-1";
 
         let credentials = undefined;

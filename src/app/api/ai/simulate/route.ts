@@ -1,10 +1,33 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { auth } from "@clerk/nextjs/server";
+import { z } from "zod";
+
+// Zod Schema Setup for Defensive Payload Validation
+const GeneratePayloadSchema = z.object({
+    diagram: z.object({
+        nodes: z.array(z.any()),  // Minimal structure, prevents completely malformed inputs
+        edges: z.array(z.any()),
+    }).strict()
+}).strict();
 
 export async function POST(req: Request) {
     try {
-        const body = await req.json();
-        const { nodes, edges } = body.diagram;
+        // [A01: Broken Access Control Defeated] - Strict session token validation
+        const { userId } = await auth();
+        if (!userId) {
+            return NextResponse.json({ success: false, error: "Unauthorized access detected. Session invalid." }, { status: 401 });
+        }
+
+        const rawBody = await req.json();
+
+        // [A05: Injection Defeated] - Validate request against schema
+        const validation = GeneratePayloadSchema.safeParse(rawBody);
+        if (!validation.success) {
+            return NextResponse.json({ success: false, error: "Invalid payload schema.", details: validation.error.format() }, { status: 400 });
+        }
+
+        const { nodes, edges } = validation.data.diagram;
 
         if (!nodes || nodes.length === 0) {
             return NextResponse.json({ success: false, error: "Empty diagram" }, { status: 400 });
