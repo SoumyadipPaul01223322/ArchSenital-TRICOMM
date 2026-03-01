@@ -1806,7 +1806,7 @@ function ArchitectContent() {
                 </div>
 
                 {/* Component List */}
-                <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.06) transparent' }}>
+                <div data-lenis-prevent className="flex-1 overflow-y-auto px-3 py-3 space-y-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.06) transparent' }}>
 
                     {/* Render each category with child components */}
                     {COMPONENT_TREE.map(({ label, children }) => {
@@ -2011,7 +2011,7 @@ function ArchitectContent() {
 
                             {/* Scenario Picker Grid */}
                             {!runningScenario && (
-                                <div className="p-5 overflow-y-auto flex-1 custom-scrollbar relative z-10">
+                                <div data-lenis-prevent className="p-5 overflow-y-auto flex-1 custom-scrollbar relative z-10">
                                     <div className="text-[10px] text-[#00E5A0] uppercase tracking-[0.2em] font-bold mb-4 flex items-center gap-2">
                                         <span className="h-px bg-[#00E5A0]/30 flex-1" />
                                         Select Vector
@@ -2085,7 +2085,7 @@ function ArchitectContent() {
                                     </div>
 
                                     {/* Kill chain log - live updates */}
-                                    <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar bg-gradient-to-b from-black/20 to-transparent">
+                                    <div data-lenis-prevent className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar bg-gradient-to-b from-black/20 to-transparent">
                                         {scenarioLog.map((entry, i) => (
                                             <div key={i} className="flex gap-4 animate-in slide-in-from-left-4 fade-in duration-400 group">
                                                 <div className="flex-shrink-0 mt-0.5 w-6 h-6 border flex items-center justify-center font-mono text-[10px] font-bold transition-colors"
@@ -2233,7 +2233,7 @@ function ArchitectContent() {
                             </div>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5" style={{ minWidth: '320px' }}>
+                        <div data-lenis-prevent className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5" style={{ minWidth: '320px' }}>
                             <ConfigContext.Provider value={{ d: selectedNode?.data, updateNodeData }}>
                                 {(() => {
                                     const ct = selectedNode?.data?.componentType as string;
@@ -3093,7 +3093,7 @@ function ArchitectContent() {
                             )}
 
                             {/* Findings Content */}
-                            <div className="flex-1 overflow-y-auto px-6 pb-6 custom-scrollbar">
+                            <div data-lenis-prevent className="flex-1 overflow-y-auto px-6 pb-6 custom-scrollbar">
 
                                 {/* Zing AI Executive Summary Card */}
                                 <div className="mb-8 border border-[#00E5A0]/30 bg-[#00E5A0]/5 relative overflow-hidden">
@@ -3393,7 +3393,7 @@ function ArchitectContent() {
                             </div>
 
                             {/* Resources Table */}
-                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-black/40">
+                            <div data-lenis-prevent className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-black/40">
                                 <div className="space-y-3">
                                     {deploymentResults?.resources.map((res, idx) => (
                                         <div key={idx} className="bg-black border border-white/10 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-[#00E5A0]/30 transition-colors group relative overflow-hidden">
