@@ -1,26 +1,345 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #090910;
+  --card: #ffffff;
+  --card-foreground: #090910;
+  --popover: #ffffff;
+  --popover-foreground: #090910;
+  --primary: #00e5a0;
+  --primary-foreground: #090910;
+  --secondary: #0d0d14;
+  --secondary-foreground: #e0e0e0;
+  --muted: #1a1a24;
+  --muted-foreground: #8a8a9a;
+  --accent: #00e5a0;
+  --accent-foreground: #090910;
+  --destructive: #ff3131;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.06);
+  --input: rgba(255, 255, 255, 0.06);
+  --ring: #00e5a0;
+  --radius: 2px;
+}
+
+.dark {
+  --background: #090910;
+  --foreground: #e8e8ed;
+  --card: #0d0d14;
+  --card-foreground: #e8e8ed;
+  --popover: #0d0d14;
+  --popover-foreground: #e8e8ed;
+  --primary: #00e5a0;
+  --primary-foreground: #090910;
+  --secondary: #0d0d14;
+  --secondary-foreground: #c0c0c8;
+  --muted: #12121c;
+  --muted-foreground: #6a6a7a;
+  --accent: #00e5a0;
+  --accent-foreground: #090910;
+  --destructive: #ff3131;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.06);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: #00e5a0;
 }
 
 @theme inline {
+  --font-sans: var(--font-inter), 'Inter', system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), 'JetBrains Mono', monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: #00e5a0;
+  --color-chart-2: #00b8d4;
+  --color-chart-3: #ffc107;
+  --color-chart-4: #ff3131;
+  --color-chart-5: #7c4dff;
+  --radius-sm: calc(var(--radius));
+  --radius-md: calc(var(--radius) + 2px);
+  --radius-lg: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 8px);
+  --color-void: #090910;
+  --color-void-light: #0d0d14;
+  --color-signal: #00e5a0;
+  --color-alert: #ff3131;
+  --color-tactical-amber: #ffc107;
+  --color-tactical-blue: #00b8d4;
+  --color-tactical-cyan: #00e5ff;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ===== APPLE-STYLE 3D & ADVANCED ANIMATIONS ===== */
+
+/* Scroll-driven reveal */
+@keyframes revealUp {
+  0% {
+    opacity: 0;
+    transform: translateY(60px) scale(0.97);
+    filter: blur(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+@keyframes revealLeft {
+  0% {
+    opacity: 0;
+    transform: translateX(-80px) rotateY(8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) rotateY(0deg);
+  }
+}
+
+@keyframes revealRight {
+  0% {
+    opacity: 0;
+    transform: translateX(80px) rotateY(-8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) rotateY(0deg);
+  }
+}
+
+@keyframes revealScale {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) rotateX(8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotateX(0deg);
+  }
+}
+
+/* Floating / levitation */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(1deg);
+  }
+}
+
+/* HUD scan line */
+@keyframes scan {
+  0% {
+    top: -2%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    top: 102%;
+    opacity: 0;
+  }
+}
+
+/* Pulse glow */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(0, 229, 160, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px 4px rgba(0, 229, 160, 0.15);
+  }
+}
+
+@keyframes pulseDot {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(0, 229, 160, 0.6);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 12px 4px rgba(0, 229, 160, 0.2);
+    transform: scale(1.2);
+  }
+}
+
+/* Shimmer / light sweep (Apple-style) */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Counter animation */
+@keyframes countUp {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Grid background fade */
+@keyframes gridFade {
+  0%, 100% {
+    opacity: 0.03;
+  }
+  50% {
+    opacity: 0.06;
+  }
+}
+
+/* Stagger entry classes */
+.anim-stagger-1 { animation-delay: 0ms; }
+.anim-stagger-2 { animation-delay: 100ms; }
+.anim-stagger-3 { animation-delay: 200ms; }
+.anim-stagger-4 { animation-delay: 300ms; }
+.anim-stagger-5 { animation-delay: 400ms; }
+.anim-stagger-6 { animation-delay: 500ms; }
+
+/* Utility animation classes */
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-float-slow {
+  animation: floatSlow 8s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 3s ease-in-out infinite;
+}
+
+.animate-pulse-dot {
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 229, 160, 0.04) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 4s linear infinite;
+}
+
+.animate-scan {
+  animation: scan 6s linear infinite;
+}
+
+.animate-grid-fade {
+  animation: gridFade 4s ease-in-out infinite;
+}
+
+/* 3D perspective container */
+.perspective-container {
+  perspective: 1200px;
+  transform-style: preserve-3d;
+}
+
+/* Apple-style glass card */
+.glass-card {
+  background: rgba(13, 13, 20, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* HUD-style card with bottom glow */
+.hud-card {
+  background: rgba(13, 13, 20, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.hud-card:hover {
+  border-color: rgba(0, 229, 160, 0.2);
+  box-shadow: 0 8px 40px rgba(0, 229, 160, 0.06), inset 0 -1px 0 rgba(0, 229, 160, 0.15);
+  transform: translateY(-4px);
+}
+
+/* Apple magnetic hover for 3D tilt */
+.tilt-3d {
+  transition: transform 0.15s ease-out;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090910;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 160, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 160, 0.4);
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
