@@ -29,6 +29,10 @@ import { Shield, Database, Globe, Server, Activity, Zap, ShieldAlert, Cpu, Messa
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Tooltip } from 'recharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { ArchNode } from './ArchNode';
+
+const nodeTypes = { archNode: ArchNode };
+
 // Canvas starts empty — populated from Convex DB on load
 const initialNodes: Node[] = [];
 const initialEdges: Edge[] = [];
@@ -863,7 +867,7 @@ function ArchitectContent() {
 
                 return {
                     ...n,
-                    type: 'default', // Force default type so rendering works natively
+                    type: 'archNode', // Custom multi-handle React Flow node
                     data: {
                         ...n.data,
                         componentType: type
@@ -1849,7 +1853,7 @@ function ArchitectContent() {
 
             const newNode: Node = {
                 id: nodeId,
-                type: "default",
+                type: "archNode",
                 position,
                 data: {
                     label,
@@ -2308,6 +2312,7 @@ function ArchitectContent() {
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
+                    nodeTypes={nodeTypes}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}

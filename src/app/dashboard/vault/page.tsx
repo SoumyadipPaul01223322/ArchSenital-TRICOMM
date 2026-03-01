@@ -44,8 +44,8 @@ export default function VaultPage() {
             // HTML-to-Image handles modern CSS (like Tailwind v4's oklab colors) much better than html2canvas
             const imgData = await htmlToImage.toPng(reportRef.current, {
                 quality: 1.0,
-                pixelRatio: 3, // High resolution
-                backgroundColor: '#060606',
+                pixelRatio: 2, // Down from 3 to prevent OOM canvas limits on long documents
+                backgroundColor: '#07070D',
                 cacheBust: true,
             });
 
@@ -224,7 +224,7 @@ export default function VaultPage() {
 
             {/* Hidden Reports Template for html-to-image */}
             {reportArch && (
-                <div style={{ position: 'fixed', top: 0, left: '-15000px', width: '1000px', zIndex: -9999 }}>
+                <div style={{ position: 'fixed', top: 0, left: '-15000px', width: '1050px', zIndex: -9999 }}>
                     <VaultReportTemplate ref={reportRef} arch={reportArch} />
                 </div>
             )}

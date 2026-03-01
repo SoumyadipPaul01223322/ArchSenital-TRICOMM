@@ -89,6 +89,7 @@ Follow this strict JSON schema for your output. Do not include any markdown form
 
 Analyze the architecture comprehensively:
 - CRITICAL RULE: If a node has 'isActive': false in its data payload, it is POWERED OFF and completely offline. It CANNOT be compromised, it CANNOT be used in the kill chain, and it MUST NOT be included in 'compromisedNodes'.
+- CRITICAL RULE: This architecture is a multi-directional graph. Nodes can have multiple incoming and outgoing connections. The attacker may pivot from a single compromised node into MULTIPLE connected nodes simultaneously. You MUST analyze all valid edge combinations for lateral movement.
 - CRITICAL RULE: If a node has security features explicitly enabled (e.g. 'wafEnabled': true, 'ddosProtection': true, 'mfaRequired': true, 'encryptionAtRest': true), the attack MUST be BLOCKED at that specific layer.
 - If the first layer of defense (like Cloudflare WAF, Firewall, or Edge API Gateway) is secure, the remaining killChain steps MUST show "BLOCKED" and prevent any further lateral movement.
 - If the attack is successfully blocked, 'totalRiskScore' MUST be very low (e.g. 5-20), 'compromisedNodes' MUST be empty [], 'financialCost' MUST be "₹0", and 'estimatedDowntime' MUST be "0 hours" or "None".

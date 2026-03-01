@@ -222,20 +222,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             ` }} />
 
             {/* Spacer — pushes main content right on md+ */}
-            <div className={`hidden md:block flex-shrink-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${collapsed ? "w-16" : "w-64"}`} />
+            <div className={`hidden md:block flex-shrink-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${isExpanded ? "w-64" : "w-16"}`} />
 
             {/* ── SIDEBAR ──────────────────────────────────────────── */}
             {/* On mobile: slide-in overlay drawer (z-[100]). On md+: fixed rail/expanded. */}
             <aside
                 className={`
-                    group/aside fixed left-0 top-0 bottom-0
+                    group/aside fixed left-0 top-0 bottom-0 z-[100]
                     bg-[#0b0b12] border-r border-white/[0.06] flex flex-col
-                    transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] z-[100]
-                    ${
-                    /* Mobile: hidden unless mobileOpen, always full-width drawer */
-                    mobileOpen ? "translate-x-0 w-64" : "-translate-x-full w-64"
-                    }
-                    md:translate-x-0 ${sidebarWidth}
+                    transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
+                    w-64
+                    ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+                    ${isExpanded ? "md:w-64" : "md:w-16"}
                 `}
                 onMouseEnter={() => collapsed && setHovered(true)}
                 onMouseLeave={() => setHovered(false)}
