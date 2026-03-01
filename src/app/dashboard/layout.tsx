@@ -278,7 +278,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
 
                 {/* Nav */}
-                <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: "none" }}>
+                <nav
+                    data-lenis-prevent
+                    className="flex-1 min-h-0 py-4 px-3 space-y-0.5 overflow-y-auto overflow-x-hidden"
+                    style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(0,229,160,0.15) transparent" }}
+                >
                     {NAV_ITEMS.map((item) => {
                         const active = isActive(item);
                         const Icon = item.icon;
